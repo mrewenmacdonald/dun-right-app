@@ -1544,7 +1544,10 @@ async function renderApprovals() {
         <div class="text-sm text-muted">Project: <strong style="color:var(--text)">${escHtml(proj?.name || '—')}</strong></div>
         <div class="text-sm text-muted">Date: ${lem.date}</div>
         <div class="divider"></div>
-        <button class="btn btn-outline btn-sm btn-full" onclick="sendDraftReminder(${lem.id}, ${lem.userId})">📨 Remind to Submit</button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <button class="btn btn-outline btn-sm" onclick="sendDraftReminder(${lem.id}, ${lem.userId})">📨 Remind</button>
+          <button class="btn btn-success btn-sm" onclick="approveLEM(${lem.id})">✓ Approve</button>
+        </div>
       </div>`;
     }
   }
@@ -1563,6 +1566,7 @@ window.sendDraftReminder = async (lemId, userId) => {
 };
 
 window.approveLEM = async (lemId) => {
+  if (currentUser?.role !== 'supervisor') { toast('Only supervisors can approve LEMs', 'error'); return; }
   const lem = await window.DR_DB.lems.get(lemId);
   if (!lem) return;
 
