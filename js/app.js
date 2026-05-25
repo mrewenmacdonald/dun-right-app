@@ -307,7 +307,7 @@ async function renderSupervisorHome() {
       <button class="btn btn-ghost" onclick="navigate('invoicing')">🧾 Invoicing</button>
       <button class="btn btn-ghost" onclick="navigate('admin')">⚙️ Admin</button>
       <button class="btn btn-ghost" onclick="navigate('lem-dashboard')">📊 LEM Board</button>
-      <button class="btn btn-ghost" onclick="navigate('walkaround')">🚛 Walkaround</button>
+      <button class="btn btn-ghost" onclick="openTimeOffRequest()">📅 Time Off</button>
     </div>`;
 
   container.innerHTML = html;
@@ -1577,31 +1577,27 @@ window.approveLEM = async (lemId) => {
 
   const pdfDoc = await generateLEMPDF(lem, proj, user, currentUser);
 
-  try { await uploadTimesheetPDF(pdfDoc, lem, proj?.name || 'Project', user?.name || 'Staff'); } catch(e) {}
+  // Download the approved PDF
+  pdfDoc.save(`LEM_${lem.lemNumber}_${lem.date || 'approved'}.pdf`);
 
+  // In-app notification to field staff
   await window.DR_DB.notifications.add({
     toUserId: lem.userId, fromUserId: currentUser.id,
-    message: `Your LEM ${lem.lemNumber} was approved`,
+    message: `Your LEM ${lem.lemNumber} was approved by ${currentUser.name}`,
     scheduledAt: new Date().toISOString(), read: false, type: 'approval'
   });
 
-  if (proj?.clientEmail) {
-    const emailIt = confirm(`Email LEM to ${proj.clientName} (${proj.clientEmail})?`);
-    if (emailIt) {
-      try {
-        const b64 = pdfToBase64(pdfDoc);
-        await sendEmail({
-          to: proj.clientEmail,
-          subject: `LEM ${lem.lemNumber} — ${proj.name} — ${lem.date}`,
-          body: `<p>Please find attached the approved LEM for <strong>${proj.name}</strong> dated ${lem.date}.</p><p>Regards,<br>${currentUser.name}<br>Keltic Geomatics</p>`,
-          attachments: [{ name: `LEM_${lem.lemNumber}.pdf`, contentType: 'application/pdf', contentBytes: b64 }]
-        });
-        toast('Email sent to client', 'success');
-      } catch(e) {}
-    }
-  }
-
-  toast('LEM approved!', 'success');
+  // Open email client pre-addressed to field staff + client + kelticfield@gmail.com
+  const emailTo = ['kelticfield@gmail.com'];
+  if (user?.email) emailTo.push(user.email);
+  if (proj?.clientEmail) emailTo.push(proj.clientEmail);
+  const lemDate = lem.date || new Date().toISOString().slice(0,10);
+  const mailSubj = encodeURIComponent(`Approved LEM ${lem.lemNumber} — ${proj?.name || 'Project'} — ${lemDate}`);
+  const mailBody = encodeURIComponent(
+    `Hi,\n\nLEM ${lem.lemNumber} for ${proj?.name || 'the project'} on ${lemDate} has been approved by ${currentUser.name}.\n\nPlease find the LEM PDF attached.\n\nRegards,\n${currentUser.name}\nKeltic Geomatics Field Services`
+  );
+  window.open(`mailto:${emailTo.join(',')}?subject=${mailSubj}&body=${mailBody}`, '_blank');
+  toast('✅ LEM approved! PDF downloaded — attach it to the email.', 'success');
   renderApprovals();
 };
 
@@ -2737,11 +2733,11 @@ async function renderAdmin() {
           <div class="card-title" style="font-size:0.9rem">${escHtml(r.staffName||'Unknown')}</div>
           <div class="text-sm text-muted">Dates: ${escHtml(r.requestDate||'—')}${r.endDate ? ' → ' + r.endDate : ''}</div>
           <div class="text-sm text-muted">${escHtml(r.message||'')}</div>
-          ${!r.approved ? `<div class="divider"></div>
+          ${!r.approved && !r.denied ? `<div class="divider"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
             <button class="btn btn-danger btn-sm" onclick="adminDenyTimeOff(${r.id})">Deny</button>
-            <button class="btn btn-success btn-sm" onclick="adminApproveTimeOff(${r.id})">Approve</button>
-          </div>` : `<div class="text-sm" style="color:var(--success);font-weight:600;margin-top:4px">✓ Approved</div>`}
+            <button class="btn btn-success btn-sm" onclick="adminApproveTimeOff(${r.id})">Approve & Email</button>
+          </div>` : r.approved ? `<div class="text-sm" style="color:var(--success);font-weight:600;margin-top:4px">✓ Approved</div>` : `<div class="text-sm" style="color:var(--danger);font-weight:600;margin-top:4px">✗ Denied</div>`}
         </div>`;
       }
     }
@@ -2834,12 +2830,22 @@ window.adminApproveTimeOff = async (notifId) => {
       message: `Your time-off request for ${req.requestDate} has been approved`,
       scheduledAt: new Date().toISOString(), read: false, type: 'timeoff_approved'
     });
+    // Draft approval email
+    const staffUser = await getUser(req.fromUserId);
+    const dateRange = req.endDate && req.endDate !== req.requestDate ? `${req.requestDate} to ${req.endDate}` : req.requestDate;
+    const toAddr = staffUser?.email ? `${staffUser.email},kelticfield@gmail.com` : 'kelticfield@gmail.com';
+    const subj = encodeURIComponent(`Time Off Approved — ${dateRange}`);
+    const body = encodeURIComponent(
+      `Hi ${req.staffName || staffUser?.name || 'there'},\n\nYour time-off request for ${dateRange} has been approved.\n\nRegards,\n${currentUser.name}\nKeltic Geomatics`
+    );
+    window.open(`mailto:${toAddr}?subject=${subj}&body=${body}`, '_blank');
   }
-  toast('Time off approved', 'success');
+  toast('✅ Approved — email client opened to notify staff', 'success');
   renderAdmin();
 };
 
 window.adminDenyTimeOff = async (notifId) => {
+  await window.DR_DB.notifications.update(notifId, { denied: true, read: true });
   const req = await window.DR_DB.notifications.get(notifId);
   if (req) {
     await window.DR_DB.notifications.add({
@@ -2847,9 +2853,17 @@ window.adminDenyTimeOff = async (notifId) => {
       message: `Your time-off request for ${req.requestDate} was not approved`,
       scheduledAt: new Date().toISOString(), read: false, type: 'timeoff_denied'
     });
+    // Draft denial email
+    const staffUser = await getUser(req.fromUserId);
+    const dateRange = req.endDate && req.endDate !== req.requestDate ? `${req.requestDate} to ${req.endDate}` : req.requestDate;
+    const toAddr = staffUser?.email ? staffUser.email : 'kelticfield@gmail.com';
+    const subj = encodeURIComponent(`Time Off Request — ${dateRange}`);
+    const body = encodeURIComponent(
+      `Hi ${req.staffName || staffUser?.name || 'there'},\n\nUnfortunately your time-off request for ${dateRange} cannot be approved at this time. Please contact us to discuss alternatives.\n\nRegards,\n${currentUser.name}\nKeltic Geomatics`
+    );
+    window.open(`mailto:${toAddr}?subject=${subj}&body=${body}`, '_blank');
   }
-  await window.DR_DB.notifications.delete(notifId);
-  toast('Request denied', 'success');
+  toast('Request denied — email client opened', 'error');
   renderAdmin();
 };
 
