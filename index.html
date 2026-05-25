@@ -12,19 +12,19 @@
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="css/app.css">
 
-  <!-- External libraries loaded from CDN (cached by service worker for offline use) -->
+  <!-- External libraries (cached by service worker for offline use) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════════
   LOGIN SCREEN
-════════════════════════════════════════════════════════════════════════════ -->
+════════════════════════════════════════════════════════════════════════ -->
 <div id="login-screen" class="login-wrap" style="display:none">
   <div class="login-logo-wrap">
     <div class="login-logo">DÙN RIGHT</div>
-    <div class="login-sub">Field Services Platform</div>
+    <div class="login-sub">Keltic Geomatics Field Platform</div>
   </div>
   <div class="login-card">
     <form id="login-form">
@@ -40,12 +40,12 @@
     </form>
     <p class="text-muted text-sm" style="text-align:center;margin-top:16px">Works offline — no internet required once installed</p>
   </div>
-  <p class="text-muted text-sm" style="margin-top:24px;text-align:center">v1.0 • DÙN RIGHT Field Services</p>
+  <p class="text-muted text-sm" style="margin-top:24px;text-align:center">v2.0 • Keltic Geomatics Field Services</p>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════════
   APP SHELL
-════════════════════════════════════════════════════════════════════════════ -->
+════════════════════════════════════════════════════════════════════════ -->
 <div id="app-shell" style="display:none">
 
   <!-- Header -->
@@ -57,9 +57,7 @@
       </div>
     </div>
     <div class="header-right">
-      <!-- Online / offline indicator -->
       <div id="online-indicator" title="Connection status" style="width:8px;height:8px;border-radius:50%;background:var(--success)"></div>
-      <!-- Notification bell -->
       <div style="position:relative;cursor:pointer" onclick="navigate('notifications')">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2">
           <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
@@ -79,8 +77,8 @@
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
-    <!-- WORK ORDERS -->
-    <div id="page-workorder" class="page" style="display:none">
+    <!-- LEMs (renamed from Work Orders) -->
+    <div id="page-lem" class="page" style="display:none">
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
@@ -99,23 +97,38 @@
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
-    <!-- APPROVALS (Supervisor only) -->
+    <!-- APPROVALS (Supervisor) -->
     <div id="page-approvals" class="page" style="display:none">
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
-    <!-- PROJECTS (Supervisor only) -->
+    <!-- PROJECTS (Supervisor) -->
     <div id="page-projects" class="page" style="display:none">
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
-    <!-- INVOICING (Supervisor only) -->
+    <!-- INVOICING (Supervisor) -->
     <div id="page-invoicing" class="page" style="display:none">
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
-    <!-- STAFF (Supervisor only) -->
+    <!-- STAFF (Supervisor) -->
     <div id="page-staff" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- EQUIPMENT (Supervisor + Field) -->
+    <div id="page-equipment" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- VEHICLE WALKAROUND -->
+    <div id="page-walkaround" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- EMPLOYEE PROFILE -->
+    <div id="page-employee-profile" class="page" style="display:none">
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
@@ -137,11 +150,11 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════════
   MODALS
-════════════════════════════════════════════════════════════════════════════ -->
+════════════════════════════════════════════════════════════════════════ -->
 
-<!-- Work Order Modal -->
+<!-- LEM Modal (reuses wo-modal ID for compat) -->
 <div class="modal-overlay" id="wo-modal-overlay" onclick="handleOverlayClick(event,'wo-modal')">
   <div class="modal-sheet" id="wo-modal-sheet"></div>
 </div>
@@ -166,6 +179,11 @@
   <div class="modal-sheet" id="staff-modal-sheet"></div>
 </div>
 
+<!-- Equipment Modal -->
+<div class="modal-overlay" id="equipment-modal-overlay" onclick="handleOverlayClick(event,'equipment-modal')">
+  <div class="modal-sheet" id="equipment-modal-sheet"></div>
+</div>
+
 <!-- Invoice Create Modal -->
 <div class="modal-overlay" id="invoice-modal-overlay" onclick="handleOverlayClick(event,'invoice-modal')">
   <div class="modal-sheet" id="invoice-modal-sheet"></div>
@@ -179,23 +197,20 @@
 <!-- More Menu -->
 <div class="modal-overlay" id="more-overlay" onclick="handleOverlayClick(event,'more')"></div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════════
   SCRIPTS
-════════════════════════════════════════════════════════════════════════════ -->
+════════════════════════════════════════════════════════════════════════ -->
 
 <script>
-  // Handle overlay backdrop clicks
   window.handleOverlayClick = function(e, id) {
     if (e.target === e.currentTarget) window.closeModal(id);
   };
 
-  // Logout
   window.logOut = function() {
     sessionStorage.removeItem('dr_user_id');
     location.reload();
   };
 
-  // Online/offline indicator
   function updateOnlineStatus() {
     const dot = document.getElementById('online-indicator');
     if (dot) dot.style.background = navigator.onLine ? 'var(--success)' : 'var(--danger)';
@@ -204,11 +219,9 @@
   window.addEventListener('offline', updateOnlineStatus);
   updateOnlineStatus();
 
-  // Notification page
-  window.navigate = window.navigate || function(){};
+  // Notifications page
   document.addEventListener('DOMContentLoaded', () => {
-    // Add notifications page render
-    const origNav = window.navigate;
+    const origNav = window.navigate || function(){};
     window.navigate = function(page) {
       origNav(page);
       if (page === 'notifications') renderNotificationsPage();
@@ -217,8 +230,9 @@
 
   async function renderNotificationsPage() {
     if (!window.DR_DB || !window.currentUser) return;
+    const userId = window.currentUser?.id || 0;
     const notifs = await window.DR_DB.notifications
-      .where('toUserId').equals(window.currentUser?.id || 0)
+      .where('toUserId').equals(userId)
       .reverse().sortBy('scheduledAt');
     const list = document.getElementById('notif-list');
     if (!list) return;
@@ -227,7 +241,7 @@
       return;
     }
     list.innerHTML = notifs.map(n => `
-      <div class="list-item ${n.read ? '' : 'card'}" style="${!n.read ? 'border-color:var(--gold)' : ''}" onclick="markRead(${n.id})">
+      <div class="list-item ${n.read ? '' : 'card'}" style="${!n.read ? 'border-color:var(--gold)' : ''}" onclick="markNotifRead(${n.id})">
         <div class="list-item-left">
           <div class="list-item-title">${n.message}</div>
           <div class="list-item-sub">${n.scheduledAt?.slice(0,16).replace('T',' ')}</div>
@@ -236,12 +250,13 @@
       </div>`).join('');
   }
 
-  async function markRead(id) {
+  async function markNotifRead(id) {
     if (window.DR_DB) await window.DR_DB.notifications.update(id, { read: true });
     renderNotificationsPage();
   }
+  window.markNotifRead = markNotifRead;
 
-  // Service Worker registration
+  // Service Worker
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/service-worker.js').catch(err => {
@@ -250,12 +265,11 @@
     });
   }
 
-  // Request notification permission
+  // Notification permission
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
 
-  // Pull-to-refresh prevention (avoid page reload on mobile swipe)
   document.addEventListener('touchstart', () => {}, { passive: true });
 </script>
 
