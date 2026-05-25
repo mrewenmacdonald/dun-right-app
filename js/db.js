@@ -164,4 +164,52 @@ export async function generateProjectNumber() {
   const counterKey = `projectCounter_${yy}`;
   const current = await db.settings.get(counterKey);
   const next = (current ? current.value : 0) + 1;
-  await db.settings.put({ key: count
+  await db.settings.put({ key: counterKey, value: next });
+  return `${yy}${String(next).padStart(4, '0')}`; // e.g. "260001"
+}
+
+// ─── LEMs ─────────────────────────────────────────────────────────────────────
+export async function createLEM(data) {
+  return db.lems.add({ ...data, status: 'draft', syncStatus: 'pending', submittedAt: null });
+}
+
+export async function getLEMsByUser(userId) {
+  return db.lems.where('userId').equals(userId).reverse().sortBy('date');
+}
+
+export async function getAllLEMs() {
+  return db.lems.reverse().sortBy('date');
+}
+
+export async function getPendingLEMs() {
+  return db.lems.where('status').equals('submitted').toArray();
+}
+
+// ─── Equipment ────────────────────────────────────────────────────────────────
+export async function getAllEquipment() {
+  return db.equipment.where('active').equals(1).toArray();
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+export async function getNotifications(userId) {
+  const now = new Date().toISOString();
+  return db.notifications
+    .where('toUserId').equals(userId)
+    .filter(n => n.scheduledAt <= now)
+    .reverse()
+    .sortBy('scheduledAt');
+}
+
+export async function markRead(id) {
+  return db.notifications.update(id, { read: true });
+}
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+export async function getSetting(key) {
+  const row = await db.settings.get(key);
+  return row ? row.value : null;
+}
+
+export async function setSetting(key, value) {
+  return db.settings.put({ key, value });
+}
