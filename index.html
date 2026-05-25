@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="DÙN RIGHT">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>DÙN RIGHT</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="css/app.css">
+
+  <!-- External libraries loaded from CDN (cached by service worker for offline use) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+  LOGIN SCREEN
+════════════════════════════════════════════════════════════════════════════ -->
+<div id="login-screen" class="login-wrap" style="display:none">
+  <div class="login-logo-wrap">
+    <div class="login-logo">DÙN RIGHT</div>
+    <div class="login-sub">Field Services Platform</div>
+  </div>
+  <div class="login-card">
+    <form id="login-form">
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="login-username" autocomplete="username" placeholder="Enter your username" required>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" placeholder="Password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-full" style="margin-top:8px">Sign In</button>
+    </form>
+    <p class="text-muted text-sm" style="text-align:center;margin-top:16px">Works offline — no internet required once installed</p>
+  </div>
+  <p class="text-muted text-sm" style="margin-top:24px;text-align:center">v1.0 • DÙN RIGHT Field Services</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+  APP SHELL
+════════════════════════════════════════════════════════════════════════════ -->
+<div id="app-shell" style="display:none">
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="logo">
+      <div>
+        <div class="logo-text">DÙN RIGHT</div>
+        <div class="logo-sub">Field Services</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <!-- Online / offline indicator -->
+      <div id="online-indicator" title="Connection status" style="width:8px;height:8px;border-radius:50%;background:var(--success)"></div>
+      <!-- Notification bell -->
+      <div style="position:relative;cursor:pointer" onclick="navigate('notifications')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2">
+          <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
+        </svg>
+        <div id="notif-count" class="notif-badge" style="display:none">0</div>
+      </div>
+      <div style="font-size:0.8rem;color:var(--muted)">Hi, <span id="header-user-name"></span></div>
+      <button onclick="logOut()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.75rem">Out</button>
+    </div>
+  </header>
+
+  <!-- Pages -->
+  <main style="padding-top:64px">
+
+    <!-- HOME -->
+    <div id="page-home" class="page">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- WORK ORDERS -->
+    <div id="page-workorder" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- SAFETY -->
+    <div id="page-safety" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- RECEIPTS -->
+    <div id="page-receipts" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- PHOTOS -->
+    <div id="page-photos" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- APPROVALS (Supervisor only) -->
+    <div id="page-approvals" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- PROJECTS (Supervisor only) -->
+    <div id="page-projects" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- INVOICING (Supervisor only) -->
+    <div id="page-invoicing" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- STAFF (Supervisor only) -->
+    <div id="page-staff" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- NOTIFICATIONS -->
+    <div id="page-notifications" class="page" style="display:none">
+      <div class="page-scroll">
+        <div class="section-header"><span class="section-title">Notifications</span></div>
+        <div id="notif-list"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Bottom Navigation -->
+  <nav class="bottom-nav" id="bottom-nav"></nav>
+
+</div><!-- end app-shell -->
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+  MODALS
+════════════════════════════════════════════════════════════════════════════ -->
+
+<!-- Work Order Modal -->
+<div class="modal-overlay" id="wo-modal-overlay" onclick="handleOverlayClick(event,'wo-modal')">
+  <div class="modal-sheet" id="wo-modal-sheet"></div>
+</div>
+
+<!-- Safety Form Modal -->
+<div class="modal-overlay" id="safety-modal-overlay" onclick="handleOverlayClick(event,'safety-modal')">
+  <div class="modal-sheet" id="safety-modal-sheet"></div>
+</div>
+
+<!-- Receipt Modal -->
+<div class="modal-overlay" id="receipt-modal-overlay" onclick="handleOverlayClick(event,'receipt-modal')">
+  <div class="modal-sheet" id="receipt-modal-sheet"></div>
+</div>
+
+<!-- Project Modal -->
+<div class="modal-overlay" id="project-modal-overlay" onclick="handleOverlayClick(event,'project-modal')">
+  <div class="modal-sheet" id="project-modal-sheet"></div>
+</div>
+
+<!-- Staff Modal -->
+<div class="modal-overlay" id="staff-modal-overlay" onclick="handleOverlayClick(event,'staff-modal')">
+  <div class="modal-sheet" id="staff-modal-sheet"></div>
+</div>
+
+<!-- Invoice Create Modal -->
+<div class="modal-overlay" id="invoice-modal-overlay" onclick="handleOverlayClick(event,'invoice-modal')">
+  <div class="modal-sheet" id="invoice-modal-sheet"></div>
+</div>
+
+<!-- Invoice View Modal -->
+<div class="modal-overlay" id="inv-view-modal-overlay" onclick="handleOverlayClick(event,'inv-view-modal')">
+  <div class="modal-sheet" id="inv-view-modal-sheet"></div>
+</div>
+
+<!-- More Menu -->
+<div class="modal-overlay" id="more-overlay" onclick="handleOverlayClick(event,'more')"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+  SCRIPTS
+════════════════════════════════════════════════════════════════════════════ -->
+
+<script>
+  // Handle overlay backdrop clicks
+  window.handleOverlayClick = function(e, id) {
+    if (e.target === e.currentTarget) window.closeModal(id);
+  };
+
+  // Logout
+  window.logOut = function() {
+    sessionStorage.removeItem('dr_user_id');
+    location.reload();
+  };
+
+  // Online/offline indicator
+  function updateOnlineStatus() {
+    const dot = document.getElementById('online-indicator');
+    if (dot) dot.style.background = navigator.onLine ? 'var(--success)' : 'var(--danger)';
+  }
+  window.addEventListener('online',  updateOnlineStatus);
+  window.addEventListener('offline', updateOnlineStatus);
+  updateOnlineStatus();
+
+  // Notification page
+  window.navigate = window.navigate || function(){};
+  document.addEventListener('DOMContentLoaded', () => {
+    // Add notifications page render
+    const origNav = window.navigate;
+    window.navigate = function(page) {
+      origNav(page);
+      if (page === 'notifications') renderNotificationsPage();
+    };
+  });
+
+  async function renderNotificationsPage() {
+    if (!window.DR_DB || !window.currentUser) return;
+    const notifs = await window.DR_DB.notifications
+      .where('toUserId').equals(window.currentUser?.id || 0)
+      .reverse().sortBy('scheduledAt');
+    const list = document.getElementById('notif-list');
+    if (!list) return;
+    if (!notifs.length) {
+      list.innerHTML = '<div class="empty-state"><p>No notifications</p></div>';
+      return;
+    }
+    list.innerHTML = notifs.map(n => `
+      <div class="list-item ${n.read ? '' : 'card'}" style="${!n.read ? 'border-color:var(--gold)' : ''}" onclick="markRead(${n.id})">
+        <div class="list-item-left">
+          <div class="list-item-title">${n.message}</div>
+          <div class="list-item-sub">${n.scheduledAt?.slice(0,16).replace('T',' ')}</div>
+        </div>
+        ${!n.read ? '<span class="badge-pill">New</span>' : ''}
+      </div>`).join('');
+  }
+
+  async function markRead(id) {
+    if (window.DR_DB) await window.DR_DB.notifications.update(id, { read: true });
+    renderNotificationsPage();
+  }
+
+  // Service Worker registration
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js').catch(err => {
+        console.warn('SW registration failed:', err);
+      });
+    });
+  }
+
+  // Request notification permission
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  // Pull-to-refresh prevention (avoid page reload on mobile swipe)
+  document.addEventListener('touchstart', () => {}, { passive: true });
+</script>
+
+<!-- Main app module -->
+<script type="module" src="js/app.js"></script>
+
+</body>
+</html>
