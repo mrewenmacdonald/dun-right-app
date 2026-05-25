@@ -270,5 +270,17 @@
     });
   }
 
+
   // Notification permission
-  if ('Notification' in window && Notification.permiss
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  document.addEventListener('touchstart', () => {}, { passive: true });
+</script>
+
+<!-- Main app module -->
+<script type="module" src="js/app.js"></script>
+
+</body>
+</html>
