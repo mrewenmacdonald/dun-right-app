@@ -1799,8 +1799,8 @@ window.addFLHACrewRow = () => {
   container.appendChild(row);
 };
 
+
 window.printFLHA = async () => {
-  // Gather form data and call PDF generator
   try {
     const { generateFLHAPDF } = await import('./pdf.js');
     const hazards = [];
@@ -1822,4 +1822,544 @@ window.printFLHA = async () => {
     });
     const formData = {
       date: $('sf-date')?.value || new Date().toISOString().slice(0,10),
-      company: $('sf-
+      company: $('sf-company')?.value || 'Keltic Geomatics',
+      task: $('sf-task')?.value || '',
+      location: $('sf-location')?.value || '',
+      muster: $('sf-muster')?.value || '',
+      ppe: $('sf-ppe')?.value || 'yes',
+      controls: $('sf-controls')?.value || '',
+      hazards, taskRows, crewRows,
+      preparedBy: currentUser.name
+    };
+    const pdf = await generateFLHAPDF(formData);
+    pdf.save(`FLHA_${formData.date}_${currentUser.name.replace(/\s+/g,'_')}.pdf`);
+  } catch(e) {
+    console.error('FLHA PDF error:', e);
+    toast('PDF generation failed: ' + e.message, 'error');
+  }
+};
+
+window.submitSafetyForm = async (type) => {
+  const projects = await getProjects();
+  const date = $('sf-date')?.value || new Date().toISOString().slice(0,10);
+  let extraData = {};
+  if (type === 'flha') {
+    const hazards = [];
+    document.querySelectorAll('.flha-haz:checked').forEach(cb => {
+      hazards.push({ category: cb.dataset.cat, item: cb.dataset.item });
+    });
+    extraData = {
+      company: $('sf-company')?.value || 'Keltic Geomatics',
+      location: $('sf-location')?.value || '',
+      muster: $('sf-muster')?.value || '',
+      ppe: $('sf-ppe')?.value || 'yes',
+      hazards,
+      controls: $('sf-controls')?.value || ''
+    };
+  }
+  await window.DR_DB.safetyForms.add({
+    userId: currentUser.id, type, date,
+    projectId: projects[0]?.id || null,
+    notes: $('sf-notes')?.value || $('sf-hazard-desc')?.value || '',
+    task: $('sf-task')?.value || '',
+    controls: $('sf-controls')?.value || '',
+    status: 'submitted', syncStatus: 'pending',
+    createdAt: new Date().toISOString(),
+    ...extraData
+  });
+  closeModal('safety-modal');
+  toast('Safety form submitted', 'success');
+  renderSafetyPage();
+};
+
+// ─── Receipts ─────────────────────────────────────────────────────────────────
+async function renderReceiptsPage() {
+  const container = $('page-receipts').querySelector('.page-scroll');
+  const receipts = await window.DR_DB.receipts.where('userId').equals(currentUser.id).reverse().sortBy('date');
+  let html = `<div class="section-header">
+    <span class="section-title">Receipts</span>
+    <button class="btn btn-primary btn-sm" onclick="openReceiptModal()">+ Add</button>
+  </div>`;
+  if (!receipts.length) {
+    html += `<div class="empty-state">${svgReceipt()}<p>No receipts yet</p></div>`;
+  } else {
+    receipts.forEach(r => {
+      html += `<div class="list-item">
+        <div class="list-item-left">
+          <div class="list-item-title">$${Number(r.amount).toFixed(2)} — ${r.date}</div>
+          <div class="list-item-sub">${r.billable ? '💰 Billable' : '🏢 Non-billable'} • ${r.description || '—'}</div>
+        </div>
+        <span class="status status-${r.status || 'submitted'}">${r.status || 'submitted'}</span>
+      </div>`;
+    });
+  }
+  container.innerHTML = html;
+}
+
+window.openReceiptModal = async () => {
+  const projects = await getProjects();
+  const modal = $('receipt-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">Submit Receipt</div>
+    <div class="form-group"><label>Date</label><input type="date" id="rec-date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="form-group"><label>Amount ($)</label><input type="number" id="rec-amount" min="0" step="0.01" placeholder="0.00"></div>
+    <div class="form-group"><label>Description / Vendor</label><input type="text" id="rec-desc" placeholder="e.g. Fuel - Petro Canada"></div>
+    <div class="toggle-row">
+      <span class="toggle-label">Billable to Client?</span>
+      <button class="toggle" id="tog-rec-billable" onclick="toggleBillable(this)"></button>
+    </div>
+    <div id="rec-project-wrap" style="display:none;margin-top:10px" class="form-group">
+      <label>Bill to Project</label>
+      <select id="rec-project">
+        <option value="">Select project...</option>
+        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group mt-12">
+      <label>Receipt Photo</label>
+      <input type="file" id="rec-photo" accept="image/*" capture="environment" style="background:transparent;border:1.5px dashed var(--gold);padding:12px;cursor:pointer">
+      <div id="rec-photo-preview" style="margin-top:8px"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('receipt-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitReceipt()">Submit</button>
+    </div>
+  `;
+  $('rec-photo').addEventListener('change', function() {
+    const file = this.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      $('rec-photo-preview').innerHTML = `<img src="${e.target.result}" style="max-width:100%;border-radius:8px;max-height:150px">`;
+    };
+    reader.readAsDataURL(file);
+  });
+  openModal('receipt-modal');
+};
+
+window.toggleBillable = (btn) => {
+  btn.classList.toggle('on');
+  $('rec-project-wrap').style.display = btn.classList.contains('on') ? 'block' : 'none';
+};
+
+window.submitReceipt = async () => {
+  const amount = parseFloat($('rec-amount').value);
+  if (!amount || isNaN(amount)) { toast('Please enter an amount', 'error'); return; }
+  const billable = $('tog-rec-billable').classList.contains('on');
+  const receipt = {
+    userId: currentUser.id, date: $('rec-date').value,
+    amount, description: $('rec-desc').value,
+    billable, projectId: billable ? parseInt($('rec-project').value) || null : null,
+    status: 'submitted', syncStatus: 'pending', submittedAt: new Date().toISOString()
+  };
+  const id = await window.DR_DB.receipts.add(receipt);
+  receipt.id = id;
+  const file = $('rec-photo').files[0];
+  if (file) { try { await uploadReceiptPhoto(file, receipt, currentUser.name); } catch(e) {} }
+  const supervisors = await window.DR_DB.users.where('role').equals('supervisor').toArray();
+  for (const sup of supervisors) {
+    await window.DR_DB.notifications.add({
+      toUserId: sup.id, fromUserId: currentUser.id,
+      message: `${currentUser.name} submitted a ${billable ? 'billable' : 'non-billable'} receipt of $${amount.toFixed(2)}`,
+      scheduledAt: new Date().toISOString(), read: false, type: 'receipt'
+    });
+  }
+  closeModal('receipt-modal');
+  toast('Receipt submitted', 'success');
+  renderReceiptsPage();
+};
+
+// ─── Photos ───────────────────────────────────────────────────────────────────
+async function renderPhotosPage() {
+  const container = $('page-photos').querySelector('.page-scroll');
+  const projects = await getProjects();
+  let html = `<div class="section-header"><span class="section-title">Site Photos</span></div>
+  <div class="card">
+    <div class="form-group">
+      <label>Project</label>
+      <select id="photo-project">
+        <option value="">Select project...</option>
+        ${projects.map(p => `<option value="${p.id}" data-name="${escHtml(p.name)}">${escHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Photos</label>
+      <input type="file" id="photo-input" accept="image/*" capture="environment" multiple style="background:transparent;border:1.5px dashed var(--gold);padding:12px;cursor:pointer">
+    </div>
+    <div id="photo-previews" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px"></div>
+    <button class="btn btn-primary btn-full mt-12" onclick="uploadPhotos()">Upload to OneDrive</button>
+  </div>`;
+  const recentPhotos = await window.DR_DB.photos.where('userId').equals(currentUser.id).reverse().limit(20).sortBy('takenAt');
+  if (recentPhotos.length) {
+    html += `<div class="section-header mt-12"><span class="section-title">Uploaded</span></div>`;
+    recentPhotos.forEach(p => {
+      html += `<div class="list-item">
+        <div class="list-item-left">
+          <div class="list-item-title">${p.filename}</div>
+          <div class="list-item-sub">${p.takenAt?.slice(0,10)} • ${p.syncStatus === 'synced' ? '☁️ OneDrive' : '📱 Pending'}</div>
+        </div>
+      </div>`;
+    });
+  }
+  container.innerHTML = html;
+  $('photo-input').addEventListener('change', function() {
+    const previews = $('photo-previews');
+    previews.innerHTML = '';
+    Array.from(this.files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        previews.innerHTML += `<img src="${e.target.result}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px">`;
+      };
+      reader.readAsDataURL(file);
+    });
+  });
+}
+
+window.uploadPhotos = async () => {
+  const input = $('photo-input');
+  const projectSel = $('photo-project');
+  const projectName = projectSel.options[projectSel.selectedIndex]?.dataset.name || 'General';
+  if (!input.files.length) { toast('Select photos first', 'error'); return; }
+  let count = await window.DR_DB.photos.where('userId').equals(currentUser.id).count();
+  for (const file of input.files) {
+    count++;
+    const filename = await uploadSitePhoto(file, projectName, currentUser.name, count).catch(() => null);
+    await window.DR_DB.photos.add({
+      userId: currentUser.id, projectId: parseInt(projectSel.value) || null,
+      filename: `${currentUser.name.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}_${String(count).padStart(3,'0')}`,
+      takenAt: new Date().toISOString(), syncStatus: filename ? 'synced' : 'pending'
+    });
+  }
+  toast(`${input.files.length} photo(s) uploaded`, 'success');
+  renderPhotosPage();
+};
+
+// ─── Staff management ─────────────────────────────────────────────────────────
+async function renderStaff() {
+  const container = $('page-staff').querySelector('.page-scroll');
+  const users = await getAllUsers();
+  let html = `<div class="section-header">
+    <span class="section-title">Staff</span>
+    <button class="btn btn-primary btn-sm" onclick="openAddStaffModal()">+ Add</button>
+  </div>`;
+  users.forEach(u => {
+    html += `<div class="list-item">
+      <div class="list-item-left" onclick="viewEmployeeProfile(${u.id})" style="cursor:pointer;flex:1">
+        <div class="list-item-title">${escHtml(u.name)}</div>
+        <div class="list-item-sub">${u.role} • ${u.province || '—'} • ${u.hourlyRate ? '$' + u.hourlyRate + '/hr' : 'rate not set'}</div>
+        <div class="list-item-sub" style="font-size:0.75rem">${u.email || '—'}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+        <button class="btn btn-sm btn-ghost" onclick="viewEmployeeProfile(${u.id})">Profile</button>
+        <button class="btn btn-sm btn-ghost" onclick="openSendReminderModal(${u.id},'${escHtml(u.name)}')">🔔 Ping</button>
+        <button class="btn btn-sm btn-danger" onclick="deactivateUser(${u.id})">Remove</button>
+      </div>
+    </div>`;
+  });
+  html += `<div class="section-header mt-16"><span class="section-title">Send Reminder</span></div>
+  <div class="card">
+    <div class="form-group"><label>Message</label><textarea id="reminder-msg" placeholder="Reminder message..."></textarea></div>
+    <div class="form-group"><label>Schedule For</label><input type="datetime-local" id="reminder-time"></div>
+    <div class="toggle-row">
+      <span class="toggle-label">Send to ALL staff</span>
+      <button class="toggle" id="tog-all-staff" onclick="toggleBtn(this,'reminder-individual')"></button>
+    </div>
+    <div id="reminder-individual">
+      <div class="form-group mt-8"><label>Or Select Specific Staff</label>
+        <select id="reminder-user">
+          ${users.filter(u => u.id !== currentUser.id).map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-full mt-8" onclick="sendReminder()">Send Reminder</button>
+  </div>`;
+  container.innerHTML = html;
+  $('reminder-time').value = new Date(Date.now() + 60000).toISOString().slice(0,16);
+}
+
+window.sendReminder = async () => {
+  const msg = $('reminder-msg').value.trim();
+  if (!msg) { toast('Enter a message', 'error'); return; }
+  const allStaff = $('tog-all-staff').classList.contains('on');
+  const scheduledAt = $('reminder-time').value ? new Date($('reminder-time').value).toISOString() : new Date().toISOString();
+  const users = allStaff ? await getAllUsers() : [{ id: parseInt($('reminder-user').value) }];
+  for (const u of users) {
+    if (u.id === currentUser.id) continue;
+    await window.DR_DB.notifications.add({
+      toUserId: u.id, fromUserId: currentUser.id, message: msg,
+      scheduledAt, read: false, type: 'reminder'
+    });
+  }
+  toast(`Reminder scheduled for ${users.length} staff`, 'success');
+  $('reminder-msg').value = '';
+};
+
+window.deactivateUser = async (id) => {
+  if (!confirm('Remove this staff member?')) return;
+  await window.DR_DB.users.update(id, { active: false });
+  toast('Staff member removed', 'info');
+  renderStaff();
+};
+
+window.openAddStaffModal = () => {
+  const PROVINCES = ['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'];
+  const modal = $('staff-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">Add Staff Member</div>
+    <div class="form-group"><label>Full Name</label><input type="text" id="staff-name" placeholder="Full name"></div>
+    <div class="form-group"><label>Username</label><input type="text" id="staff-username" placeholder="login username"></div>
+    <div class="form-group"><label>Password</label><input type="password" id="staff-pass" placeholder="Temporary password"></div>
+    <div class="form-group"><label>Email</label><input type="email" id="staff-email" placeholder="email@company.com"></div>
+    <div class="form-group"><label>Role</label>
+      <select id="staff-role"><option value="field">Field Staff</option><option value="supervisor">Supervisor</option></select>
+    </div>
+    <div class="form-group"><label>Hourly Rate ($/hr)</label><input type="number" id="staff-rate" min="0" step="0.01" placeholder="e.g. 55.00"></div>
+    <div class="form-group"><label>Province</label>
+      <select id="staff-province">
+        ${PROVINCES.map(p => `<option value="${p}"${p === 'BC' ? ' selected' : ''}>${p}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+      <button class="btn btn-ghost" onclick="closeModal('staff-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="addStaff()">Add</button>
+    </div>
+  `;
+  openModal('staff-modal');
+};
+
+window.addStaff = async () => {
+  const name = $('staff-name').value.trim();
+  const username = $('staff-username').value.trim().toLowerCase();
+  if (!name || !username) { toast('Name and username required', 'error'); return; }
+  const exists = await window.DR_DB.users.where('username').equals(username).first();
+  if (exists) { toast('Username already taken', 'error'); return; }
+  await window.DR_DB.users.add({
+    name, username, password: $('staff-pass').value,
+    email: $('staff-email').value, role: $('staff-role').value,
+    hourlyRate: parseFloat($('staff-rate').value) || 0,
+    province: $('staff-province').value,
+    active: true
+  });
+  closeModal('staff-modal');
+  toast('Staff member added', 'success');
+  renderStaff();
+};
+
+window.openSendReminderModal = (userId, name) => {
+  toast(`Use the reminder section below to ping ${name}`, 'info');
+};
+
+// ─── Invoicing ────────────────────────────────────────────────────────────────
+async function renderInvoicing() {
+  const container = $('page-invoicing').querySelector('.page-scroll');
+  const invoices = await window.DR_DB.invoices.toArray();
+  const projects = await getProjects(false);
+  let html = `<div class="section-header">
+    <span class="section-title">Invoices</span>
+    <button class="btn btn-primary btn-sm" onclick="openNewInvoiceModal()">+ New</button>
+  </div>`;
+  if (!invoices.length) {
+    html += `<div class="empty-state">${svgDoc()}<p>No invoices yet</p></div>`;
+  } else {
+    for (const inv of invoices) {
+      const proj = projects.find(p => p.id === inv.projectId);
+      html += `<div class="list-item" onclick="viewInvoice(${inv.id})">
+        <div class="list-item-left">
+          <div class="list-item-title">INV-${String(inv.id).padStart(4,'0')} — ${escHtml(proj?.name || '—')}</div>
+          <div class="list-item-sub">$${Number(inv.total || 0).toFixed(2)} • ${inv.createdAt?.slice(0,10)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="status status-${inv.status}">${inv.status}</span>
+          <span class="chevron">›</span>
+        </div>
+      </div>`;
+    }
+  }
+  container.innerHTML = html;
+}
+
+window.openNewInvoiceModal = async () => {
+  const projects = await getProjects(false);
+  const modal = $('invoice-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">New Invoice</div>
+    <div class="form-group"><label>Project</label>
+      <select id="inv-project" onchange="loadApprovedLEMs(this.value)">
+        <option value="">Select project...</option>
+        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div id="inv-lem-section" style="display:none">
+      <div class="section-header mt-8"><span class="section-title">Attach LEMs</span></div>
+      <div id="inv-lem-list"></div>
+    </div>
+    <div class="section-header mt-8"><span class="section-title">Line Items</span>
+      <button class="btn btn-sm btn-outline" onclick="addInvLine()">+ Add Line</button>
+    </div>
+    <div id="inv-lines"></div>
+    <div class="form-group mt-8"><label>Payment Terms</label>
+      <select id="inv-terms">
+        <option value="30 days net">30 days net</option>
+        <option value="15 days net">15 days net</option>
+        <option value="Due on receipt">Due on receipt</option>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('invoice-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveInvoice()">Create Invoice</button>
+    </div>
+  `;
+  openModal('invoice-modal');
+};
+
+window.loadApprovedLEMs = async (projectId) => {
+  if (!projectId) return;
+  const lems = await window.DR_DB.lems.where('projectId').equals(parseInt(projectId)).filter(l => l.status === 'approved').toArray();
+  const section = $('inv-lem-section');
+  const list = $('inv-lem-list');
+  section.style.display = 'block';
+  if (!lems.length) { list.innerHTML = '<p class="text-muted text-sm">No approved LEMs for this project</p>'; return; }
+  list.innerHTML = lems.map(lem => `
+    <div class="toggle-row">
+      <span class="toggle-label">${escHtml(lem.lemNumber || `LEM-${String(lem.id).padStart(4,'0')}`)} — ${lem.date}</span>
+      <input type="checkbox" value="${lem.id}" id="lem-check-${lem.id}" style="width:20px;height:20px;cursor:pointer">
+    </div>`).join('');
+};
+
+window.addInvLine = () => {
+  const container = $('inv-lines');
+  const row = el('div', 'card mt-8');
+  row.innerHTML = `
+    <div class="form-group"><label>Description</label><input type="text" class="inv-desc" placeholder="Line item description"></div>
+    <div class="grid-2">
+      <div class="form-group"><label>Qty</label><input type="number" class="inv-qty" value="1" min="0" step="0.5"></div>
+      <div class="form-group"><label>Rate ($)</label><input type="number" class="inv-rate" value="0" min="0" step="0.01"></div>
+    </div>
+    <button onclick="this.closest('.card').remove()" class="btn btn-danger btn-sm">Remove</button>
+  `;
+  container.appendChild(row);
+};
+
+window.saveInvoice = async () => {
+  const projectId = parseInt($('inv-project').value);
+  if (!projectId) { toast('Select a project', 'error'); return; }
+  const lemIds = Array.from(document.querySelectorAll('#inv-lem-list input[type=checkbox]:checked')).map(cb => parseInt(cb.value));
+  const lines = [];
+  document.querySelectorAll('#inv-lines .card').forEach(card => {
+    const desc = card.querySelector('.inv-desc').value;
+    const qty  = parseFloat(card.querySelector('.inv-qty').value) || 1;
+    const rate = parseFloat(card.querySelector('.inv-rate').value) || 0;
+    if (desc) lines.push({ description: desc, quantity: qty, rate, amount: qty * rate });
+  });
+  const total = lines.reduce((s, l) => s + l.amount, 0);
+  const invId = await window.DR_DB.invoices.add({
+    projectId, lemIds, status: 'draft', total,
+    dueDate: $('inv-terms').value,
+    createdBy: currentUser.id, createdAt: new Date().toISOString()
+  });
+  for (const line of lines) await window.DR_DB.invoiceItems.add({ invoiceId: invId, lemId: null, ...line });
+  closeModal('invoice-modal');
+  toast('Invoice created', 'success');
+  renderInvoicing();
+};
+
+window.viewInvoice = async (invId) => {
+  const inv = await window.DR_DB.invoices.get(invId);
+  if (!inv) return;
+  const items = await window.DR_DB.invoiceItems.where('invoiceId').equals(invId).toArray();
+  const projects = await getProjects(false);
+  const proj = projects.find(p => p.id === inv.projectId);
+  const modal = $('inv-view-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">INV-${String(invId).padStart(4,'0')}</div>
+    <div class="text-sm text-muted">Project: <strong style="color:var(--text)">${escHtml(proj?.name || '—')}</strong></div>
+    <div class="text-sm text-muted">Client: ${escHtml(proj?.clientName || '—')}</div>
+    <div class="divider"></div>
+    ${items.map(i => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span class="text-sm">${escHtml(i.description)}</span>
+      <span class="text-sm text-gold">$${Number(i.amount).toFixed(2)}</span>
+    </div>`).join('')}
+    <div style="display:flex;justify-content:space-between;padding:12px 0" class="mt-8">
+      <strong>Total (+ GST)</strong>
+      <strong class="text-gold">$${(inv.total * 1.05).toFixed(2)}</strong>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+      <button class="btn btn-ghost" onclick="closeModal('inv-view-modal')">Close</button>
+      <button class="btn btn-primary" onclick="finalizeInvoice(${invId})">Generate & Email PDF</button>
+    </div>
+  `;
+  openModal('inv-view-modal');
+};
+
+window.finalizeInvoice = async (invId) => {
+  const inv = await window.DR_DB.invoices.get(invId);
+  const items = await window.DR_DB.invoiceItems.where('invoiceId').equals(invId).toArray();
+  const projects = await getProjects(false);
+  const proj = projects.find(p => p.id === inv.projectId);
+  const pdf = await generateInvoicePDF(inv, proj, items, []);
+  try { await uploadInvoicePDF(pdf, inv, proj?.name || 'Project'); } catch(e) {}
+  await window.DR_DB.invoices.update(invId, { status: 'sent', sentAt: new Date().toISOString() });
+  if (proj?.clientEmail) {
+    try {
+      const b64 = pdfToBase64(pdf);
+      await sendEmail({
+        to: proj.clientEmail,
+        subject: `Invoice INV-${String(invId).padStart(4,'0')} — ${proj.name}`,
+        body: `<p>Please find attached invoice INV-${String(invId).padStart(4,'0')} for <strong>${proj.name}</strong>.</p><p>Regards,<br>${currentUser.name}<br>Keltic Geomatics</p>`,
+        attachments: [{ name: `Invoice_INV-${String(invId).padStart(4,'0')}.pdf`, contentType: 'application/pdf', contentBytes: b64 }]
+      });
+    } catch(e) {}
+  }
+  closeModal('inv-view-modal');
+  toast('Invoice finalized and emailed', 'success');
+  renderInvoicing();
+};
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function timeSince(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ─── SVG Icons ────────────────────────────────────────────────────────────────
+function svgHome()      { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`; }
+function svgClipboard() { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>`; }
+function svgShield()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`; }
+function svgReceipt()   { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 2v20l3-2 3 2 3-2 3 2 3-2V2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/></svg>`; }
+function svgCamera()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>`; }
+function svgCheck()     { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`; }
+function svgFolder()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>`; }
+function svgDoc()       { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`; }
+function svgPeople()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>`; }
+function svgGrid()      { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`; }
+function svgWrench()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>`; }
+function svgTruck()     { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`; }
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  const savedId = sessionStorage.getItem('dr_user_id');
+  if (savedId) {
+    const user = await window.DR_DB.users.get(parseInt(savedId));
+    if (user && user.active) { currentUser = user; showApp(); return; }
+  }
+  $('login-form').addEventListener('submit', handleLogin);
+  $('login-screen').style.display = 'flex';
+});
+
+// Expose for inline handlers
+window.navigate = navigate;
+window.openModal = openModal;
+window.closeModal = closeModal;
+window.currentUser = null;
