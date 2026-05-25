@@ -586,3 +586,213 @@ export async function generateInvoicePDF(invoice, project, items, lems) {
 
   return doc;
 }
+
+// ─── FLHA PDF ─────────────────────────────────────────────────────────────────
+export async function generateFLHAPDF(formData) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
+  const PW = 216, PH = 279, M = 10, CW = PW - M * 2;
+  let y = M;
+
+  function checkPage(needed) {
+    if (y + (needed || 20) > PH - 14) { doc.addPage(); y = M; }
+  }
+
+  function catHdr(text, color) {
+    checkPage(10);
+    doc.setFillColor(color[0], color[1], color[2]);
+    doc.rect(M, y, CW, 5.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7);
+    doc.setTextColor(255, 255, 255);
+    doc.text(text.toUpperCase(), M + 2, y + 3.8);
+    doc.setTextColor(30, 30, 30); y += 7;
+  }
+
+  // Page header
+  doc.setFillColor(20, 80, 40);
+  doc.rect(0, 0, PW, 20, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(255,255,255);
+  doc.text('KELTIC GEOMATICS', M, 9);
+  doc.setFontSize(9);
+  doc.text('Field Level Hazard Assessment (FLHA)', M, 16);
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
+  doc.text('Form #FLHA2015/003', PW - M, 9, { align: 'right' });
+  doc.text('Date: ' + (formData.date || ''), PW - M, 16, { align: 'right' });
+  y = 26;
+
+  // Info block
+  doc.setFillColor(20,80,40); doc.rect(M, y, CW, 6, 'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(255,255,255);
+  doc.text('JOB INFORMATION', M + 2, y + 4.2);
+  doc.setTextColor(30,30,30); y += 7;
+  const info = [
+    ['Company:', formData.company || 'Keltic Geomatics', 'Prepared By:', formData.preparedBy || ''],
+    ['Work Description:', formData.task || '', 'Location:', formData.location || ''],
+    ['Muster Point:', formData.muster || '', 'PPE Inspected:', formData.ppe === 'yes' ? 'Yes ✓' : formData.ppe === 'partial' ? 'Partial' : 'No']
+  ];
+  info.forEach(([l1,v1,l2,v2]) => {
+    doc.setFont('helvetica','bold'); doc.setFontSize(7.5);
+    doc.text(l1, M, y); doc.setFont('helvetica','normal'); doc.text(v1, M+36, y);
+    if (l2) { doc.setFont('helvetica','bold'); doc.text(l2, M+108, y); doc.setFont('helvetica','normal'); doc.text(v2, M+138, y); }
+    y += 5.5;
+  });
+  y += 3;
+
+  // STOP & THINK banner
+  doc.setFillColor(231,76,60); doc.rect(M, y, CW, 9, 'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(255,255,255);
+  doc.text('STOP & THINK  —  Identify ALL Hazards Before Starting Work', PW/2, y+6.2, { align:'center' });
+  doc.setTextColor(30,30,30); y += 13;
+
+  // Legend
+  doc.setFont('helvetica','bold'); doc.setFontSize(6.5);
+  doc.text('SEVERITY: 1=Fatality/Perm Disability  2=LTI/Medical Aid  3=First Aid  4=Near Miss  5=Property Only', M, y); y += 4;
+  doc.text('PROBABILITY: A=Certain/Likely  B=Unusual/Possible  C=Conceivable  D=Remote  E=Practically Impossible', M, y); y += 6;
+
+  // Hazard section header
+  doc.setFillColor(20,80,40); doc.rect(M, y, CW, 6, 'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(255,255,255);
+  doc.text('HAZARD IDENTIFICATION — CHECK ALL THAT APPLY', M + 2, y + 4.2);
+  doc.setTextColor(30,30,30); y += 7;
+
+  const checkedSet = new Set((formData.hazards||[]).map(h => h.item));
+  const cats = [
+    { title:'Environmental', color:[46,204,113], items:['1. Extreme heat / sun exposure','2. Extreme cold / wind chill','3. Rain / wet / slippery conditions','4. Lightning / electrical storm','5. High winds / gusts','6. Poor visibility / fog / dust','7. Icy / frozen surfaces','8. Wildlife / animal hazards','9. Insects / vector-borne hazards','10. Terrain hazards (slopes, ditches, soft ground)','11. Flooding / standing water / spring thaw'] },
+    { title:'Ergonomic', color:[52,152,219], items:['12. Awkward posture / body positioning','13. Manual material handling','14. Heavy lifting / lowering','15. Repetitive motion / strain','16. Prolonged standing / walking on uneven ground','17. Hand-arm vibration (equipment use)','18. Fatigue / physical exertion'] },
+    { title:'Access / Egress', color:[230,126,34], items:['19. Uneven / unstable ground surface','20. Working at elevation (banks, embankments)','21. Confined / restricted space','22. Trenches / excavations nearby','23. Unimproved / off-road access','24. Entering / exiting vehicles or equipment','25. Slip, trip and fall hazards'] },
+    { title:'Overhead', color:[155,89,182], items:['26. Overhead power lines (within 7m)','27. Falling objects / tools from above','28. Suspended loads / rigging overhead','29. Low clearance structures / bridges','30. Unstable overhead tree branches / widowmakers','31. Low-flying aircraft / helicopter operations','32. Birds / nests / wasp nests overhead'] },
+    { title:'Rigging & Hoisting', color:[231,76,60], items:['33. Improper rigging / incorrect sling angle','34. Load swinging / unexpected movement','35. Equipment overload / capacity exceeded','36. Ground instability under crane / equipment','37. Communication failure during lift','38. Tag line control / load management'] },
+    { title:'Electrical', color:[243,156,18], items:['39. Buried / underground utilities (gas, power, telecom)','40. Overhead conductors / energized lines','41. Ground fault / stray current','42. Equipment power failure or malfunction','43. Temporary power sources / generators','44. Electromagnetic interference (GPS, radio equipment)'] },
+    { title:'Personal Limitations', color:[26,188,156], items:['45. Fatigue / insufficient rest (< 8 hours)','46. Physical impairment / existing injury','47. Medication effects / substance impairment','48. Lack of training / unfamiliarity with task'] }
+  ];
+
+  cats.forEach(cat => {
+    const rows = Math.ceil(cat.items.length / 2);
+    checkPage(8 + rows * 4.8);
+    catHdr(cat.title, cat.color);
+    const halfW = CW / 2;
+    for (let i = 0; i < cat.items.length; i += 2) {
+      checkPage(5);
+      [cat.items[i], cat.items[i+1]].forEach((item, ci) => {
+        if (!item) return;
+        const x = M + ci * halfW;
+        const chk = checkedSet.has(item);
+        doc.setFillColor(chk ? cat.color[0] : 255, chk ? cat.color[1] : 255, chk ? cat.color[2] : 255);
+        doc.setDrawColor(120,120,120);
+        doc.rect(x + 1, y - 2.8, 3.5, 3.5, chk ? 'FD' : 'S');
+        if (chk) { doc.setFont('helvetica','bold'); doc.setFontSize(5.5); doc.setTextColor(255,255,255); doc.text('✓', x + 1.6, y + 0.2); }
+        doc.setFont('helvetica','normal'); doc.setFontSize(6.5); doc.setTextColor(30,30,30);
+        doc.text(item, x + 6, y, { maxWidth: halfW - 8 });
+      });
+      y += 4.8;
+    }
+    y += 2;
+  });
+
+  // Tasks / Hazards / Controls table
+  checkPage(50);
+  doc.setFillColor(20,80,40); doc.rect(M, y, CW, 6, 'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(255,255,255);
+  doc.text('TASKS / HAZARDS / PRIORITY / CONTROL MEASURES', M+2, y+4.2);
+  doc.setTextColor(30,30,30); y += 7;
+
+  const tX = [M, M+50, M+100, M+116];
+  const tW = [48, 48, 14, CW - 118];
+  const tHdrs = ['Task Step','Hazard Identified','Pri.','Control Measure'];
+  doc.setFillColor(40,40,40); doc.rect(M, y, CW, 5.5, 'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(255,255,255);
+  tHdrs.forEach((h,i) => doc.text(h, tX[i]+1, y+3.8));
+  doc.setTextColor(30,30,30); y += 6;
+
+  const taskRows = formData.taskRows || [];
+  while (taskRows.length < 5) taskRows.push({task:'',hazard:'',priority:'',control:''});
+  taskRows.forEach((row, ri) => {
+    const rh = 8;
+    checkPage(rh + 2);
+    doc.setFillColor(ri%2===0 ? 255:248, ri%2===0 ? 255:248, ri%2===0 ? 255:248);
+    doc.rect(M, y, CW, rh, 'F');
+    doc.setDrawColor(180,180,180); doc.rect(M, y, CW, rh, 'S');
+    tX.slice(1).forEach(x => doc.line(x, y, x, y+rh));
+    doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
+    doc.text(row.task||'', tX[0]+1, y+5, {maxWidth:tW[0]-2});
+    doc.text(row.hazard||'', tX[1]+1, y+5, {maxWidth:tW[1]-2});
+    const priColor = {H:[231,76,60],M:[243,156,18],L:[46,204,113]}[row.priority];
+    if (priColor) {
+      doc.setFillColor(priColor[0],priColor[1],priColor[2]); doc.rect(tX[2], y, tW[2], rh, 'F');
+      doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+      doc.text(row.priority, tX[2]+4, y+5); doc.setTextColor(30,30,30); doc.setFont('helvetica','normal');
+    }
+    doc.text(row.control||'', tX[3]+1, y+5, {maxWidth:tW[3]-2});
+    y += rh;
+  });
+  y += 5;
+
+  // Controls
+  if (formData.controls) {
+    checkPage(20);
+    doc.setFillColor(20,80,40); doc.rect(M,y,CW,6,'F');
+    doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(255,255,255);
+    doc.text('ADDITIONAL CONTROLS / EMERGENCY PROCEDURES', M+2, y+4.2);
+    doc.setTextColor(30,30,30); y += 8;
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
+    doc.splitTextToSize(formData.controls, CW-2).forEach(l => { checkPage(5); doc.text(l, M+1, y); y += 4.5; });
+    y += 4;
+  }
+
+  // Job completion
+  checkPage(50);
+  doc.setFillColor(20,80,40); doc.rect(M,y,CW,6,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(255,255,255);
+  doc.text('JOB COMPLETION CHECKLIST', M+2, y+4.2);
+  doc.setTextColor(30,30,30); y += 8;
+  ['All tools and equipment accounted for','Site left clean — no debris or hazards remaining','PPE removed and stored properly','Crew members returned safe','Supervisor notified of completion'].forEach(item => {
+    checkPage(6);
+    doc.setDrawColor(100,100,100); doc.rect(M+1, y-2.8, 4, 4, 'S');
+    doc.setFont('helvetica','normal'); doc.setFontSize(8);
+    doc.text(item, M+7, y); y += 6;
+  });
+  y += 5;
+
+  // Crew signatures
+  checkPage(60);
+  doc.setFillColor(20,80,40); doc.rect(M,y,CW,6,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(255,255,255);
+  doc.text('CREW ACKNOWLEDGEMENT — PRINT NAME & SIGN', M+2, y+4.2);
+  doc.setTextColor(30,30,30); y += 8;
+
+  const crew = (formData.crewRows||[]).length ? formData.crewRows : [{name:'',role:''},{name:'',role:''},{name:'',role:''}];
+  const sigX = [M, M + CW/2];
+  doc.setFont('helvetica','bold'); doc.setFontSize(7);
+  sigX.forEach(x => {
+    doc.text('Name / Print:', x, y);
+    doc.text('Role:', x+60, y);
+    doc.text('Signature:', x+88, y);
+  });
+  y += 4;
+  for (let i = 0; i < crew.length; i += 2) {
+    checkPage(16);
+    [crew[i], crew[i+1]].forEach((cr, ci) => {
+      if (!cr) return;
+      const x = sigX[ci] || M;
+      doc.setFont('helvetica','normal'); doc.setFontSize(8);
+      doc.text(cr.name||'', x, y+4);
+      doc.text(cr.role||'', x+60, y+4);
+      doc.setDrawColor(100,100,100);
+      doc.line(x, y+6, x+52, y+6);
+      doc.line(x+60, y+6, x+82, y+6);
+      doc.line(x+88, y+6, x + CW/2 - 4, y+6);
+    });
+    y += 14;
+  }
+
+  // Footer on all pages
+  const totalPages = doc.getNumberOfPages();
+  for (let pg = 1; pg <= totalPages; pg++) {
+    doc.setPage(pg);
+    doc.setFillColor(20,80,40); doc.rect(0, PH-10, PW, 10, 'F');
+    doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(255,255,255);
+    doc.text('Keltic Geomatics — Field Level Hazard Assessment — Form #FLHA2015/003', M, PH-4);
+    doc.text('Page ' + pg + ' of ' + totalPages, PW-M, PH-4, { align:'right' });
+  }
+  return doc;
+}

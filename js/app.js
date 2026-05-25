@@ -1,6 +1,6 @@
 // DÙN RIGHT — Main application logic
-import { login, getAllUsers, getUser, getProjects, createProject,
-         createLEM, getLEMsByUser, getPendingLEMs, getAllEquipment,
+import { login, getAllUsers, getUser, getProjects, createProject, generateProjectNumber,
+         createLEM, getLEMsByUser, getAllLEMs, getPendingLEMs, getAllEquipment,
          getNotifications, markRead, getSetting, setSetting } from './db.js';
 import { generateLEMPDF, generateInvoicePDF } from './pdf.js';
 import { setAccessToken, uploadTimesheetPDF, uploadInvoicePDF,
@@ -61,6 +61,7 @@ function navigate(page) {
   if (page === 'equipment')        renderEquipment();
   if (page === 'walkaround')       renderWalkaround();
   if (page === 'employee-profile') renderEmployeeProfile();
+  if (page === 'lem-dashboard')    renderLEMDashboard();
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
@@ -96,12 +97,13 @@ function buildNav() {
     { page: 'photos',   icon: svgCamera(),    label: 'Photos' }
   ];
   const supervisorExtra = [
-    { page: 'approvals',  icon: svgCheck(),    label: 'Approve' },
-    { page: 'projects',   icon: svgFolder(),   label: 'Projects' },
-    { page: 'invoicing',  icon: svgDoc(),      label: 'Invoices' },
-    { page: 'staff',      icon: svgPeople(),   label: 'Staff' },
-    { page: 'equipment',  icon: svgWrench(),   label: 'Equipment' },
-    { page: 'walkaround', icon: svgTruck(),    label: 'Walkaround' }
+    { page: 'approvals',     icon: svgCheck(),    label: 'Approve' },
+    { page: 'projects',      icon: svgFolder(),   label: 'Projects' },
+    { page: 'lem-dashboard', icon: svgClipboard(),label: 'LEM Board' },
+    { page: 'invoicing',     icon: svgDoc(),      label: 'Invoices' },
+    { page: 'staff',         icon: svgPeople(),   label: 'Staff' },
+    { page: 'equipment',     icon: svgWrench(),   label: 'Equipment' },
+    { page: 'walkaround',    icon: svgTruck(),    label: 'Walkaround' }
   ];
 
   const bottomItems = currentUser.role === 'supervisor'
@@ -124,6 +126,46 @@ function buildNav() {
     buildMoreMenu([], [fieldItems[4]]);
   }
 }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const TITLE_ROLES = [
+  '1 Person Survey Crew',
+  '2 Person Survey Crew',
+  '1 Person Utility Locate Crew',
+  '2 Person Locate Crew',
+  'Survey Manager',
+  'Project Manager',
+  'Project Coordinator',
+  'CAD Technician',
+  'Construction Manager',
+  'Construction Advisor',
+  'Concrete Testing Technician',
+  'Director of Business Development'
+];
+
+const EQUIPMENT_TYPES = [
+  'Trimble R10',
+  'Trimble R12',
+  'Trimble SX10',
+  'Trimble S6',
+  'Trimble S7',
+  'Trimble VX',
+  'Utility Locator',
+  'Mavic 3E Drone',
+  'Phantom 4 RTK Drone',
+  'Other'
+];
+
+const BATTERY_TYPES = [
+  'Trimble GPS Battery',
+  'Trimble Total Station Battery',
+  'Trimble Data Collector Battery',
+  'Tripod',
+  'Prism / Pole',
+  'Drone Battery',
+  'Extension Cable',
+  'Other Accessory'
+];
 
 function buildMoreMenu(extra, fieldBase) {
   const overlay = $('more-overlay');
@@ -273,7 +315,6 @@ async function renderLEMList() {
 // ─── New LEM Modal ────────────────────────────────────────────────────────────
 window.openNewLEMModal = async () => {
   const projects = await getProjects();
-  const equipment = await getAllEquipment();
 
   const modal = $('wo-modal-sheet');
   modal.innerHTML = `
@@ -285,15 +326,15 @@ window.openNewLEMModal = async () => {
       <input type="date" id="lem-date" value="${new Date().toISOString().slice(0,10)}" onchange="updateLEMNumber()">
     </div>
     <div class="form-group">
-      <label>Project</label>
-      <select id="lem-project" onchange="updateLEMNumber()">
-        <option value="">Select project...</option>
-        ${projects.map(p => `<option value="${p.id}" data-num="${escHtml(p.projectNumber || String(p.id).padStart(6,'0'))}">${escHtml(p.name)}</option>`).join('')}
-      </select>
+      <label>Search Project (name or number)</label>
+      <input type="text" id="lem-project-search" placeholder="Type to search projects..." oninput="filterLEMProjects(this.value)" autocomplete="off">
+      <div id="lem-project-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;margin-top:4px;display:none;background:var(--surface)"></div>
+      <input type="hidden" id="lem-project" value="">
+      <div id="lem-project-selected" style="margin-top:4px;font-size:0.85rem;color:var(--gold)"></div>
     </div>
     <div class="form-group">
       <label>LEM #</label>
-      <input type="text" id="lem-number" placeholder="Auto-generated" readonly style="background:var(--surface);color:var(--muted)">
+      <input type="text" id="lem-number" placeholder="Select a project first" readonly style="background:var(--surface);color:var(--muted)">
     </div>
 
     <div class="divider"></div>
@@ -307,19 +348,24 @@ window.openNewLEMModal = async () => {
 
     <div class="divider"></div>
 
-    <!-- INSTRUMENTS SECTION -->
+    <!-- EQUIPMENT SECTION -->
     <div class="section-header">
-      <span class="section-title">Instruments Used</span>
-      <button class="btn btn-sm btn-outline" onclick="addInstrumentRow()">+ Add</button>
+      <span class="section-title">Equipment Used</span>
     </div>
-    <div id="instrument-rows"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
-      ${equipment.map(eq => `
-        <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;text-transform:none;letter-spacing:0;padding:6px 0;cursor:pointer">
-          <input type="checkbox" class="eq-check" data-id="${eq.id}" data-name="${escHtml(eq.name)}" data-serial="${escHtml(eq.serialNumber || '')}">
-          ${escHtml(eq.name)}
-        </label>`).join('')}
+    <div id="lem-equipment-rows"></div>
+    <div class="form-group mt-8">
+      <label>Additional Equipment / Notes</label>
+      <textarea id="lem-equipment-notes" placeholder="Other tools, accessories..." rows="2"></textarea>
     </div>
+
+    <div class="divider"></div>
+
+    <!-- BATTERIES & ACCESSORIES -->
+    <div class="section-header">
+      <span class="section-title">Batteries &amp; Accessories</span>
+      <button class="btn btn-sm btn-outline" onclick="addBatteryRow()">+ Add</button>
+    </div>
+    <div id="lem-battery-rows"></div>
 
     <div class="divider"></div>
 
@@ -364,18 +410,126 @@ window.openNewLEMModal = async () => {
     <button class="btn btn-success btn-full mt-8" onclick="submitLEM('submitted')">Submit for Approval</button>
   `;
 
+  // Store projects for search
+  window._lemProjectsCache = projects;
+
   setTimeout(() => {
     addLabourRow();
     setupSigCanvas();
+    initLEMEquipmentSlots();
+    addBatteryRow();
   }, 50);
 
   openModal('wo-modal');
 };
 
+// ─── Project search for LEM ───────────────────────────────────────────────────
+window.filterLEMProjects = (query) => {
+  const list = $('lem-project-list');
+  if (!list) return;
+  const projects = window._lemProjectsCache || [];
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? projects.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        (p.projectNumber || '').toLowerCase().includes(q))
+    : projects;
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:8px;color:var(--muted);font-size:0.85rem">No projects found</div>';
+    list.style.display = 'block';
+    return;
+  }
+  list.innerHTML = filtered.map(p => {
+    const num = escHtml(p.projectNumber || String(p.id).padStart(6,'0'));
+    const name = escHtml(p.name);
+    return `<div onclick="selectLEMProject(${p.id},'${name}','${num}')"
+       style="padding:10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:0.9rem">
+      <strong>${name}</strong>
+      <span style="color:var(--muted);font-size:0.8rem;margin-left:8px">#${num}</span>
+    </div>`;
+  }).join('');
+  list.style.display = 'block';
+};
+
+window.selectLEMProject = (id, name, projNum) => {
+  $('lem-project').value = id;
+  $('lem-project-search').value = name;
+  $('lem-project-selected').textContent = `✓ #${projNum} — ${name}`;
+  $('lem-project-list').style.display = 'none';
+  // Store num for LEM number generation
+  window._selectedProjNum = projNum;
+  updateLEMNumber();
+};
+
+// ─── Equipment slots for LEM ──────────────────────────────────────────────────
+const MIN_EQ_SLOTS = 5;
+
+function initLEMEquipmentSlots() {
+  const container = $('lem-equipment-rows');
+  if (!container) return;
+  container.innerHTML = '';
+  for (let i = 0; i < MIN_EQ_SLOTS; i++) addEquipmentSlot();
+}
+
+window.addEquipmentSlot = () => {
+  const container = $('lem-equipment-rows');
+  if (!container) return;
+  const idx = container.querySelectorAll('.eq-slot').length;
+  const slot = el('div', 'eq-slot card mt-8');
+  slot.style.padding = '8px';
+  slot.innerHTML = `
+    <div class="form-group" style="margin-bottom:6px">
+      <label style="font-size:0.75rem">Equipment Type</label>
+      <select class="eq-type" onchange="onEquipmentTypeSelected(this)">
+        <option value="">— Select equipment —</option>
+        ${EQUIPMENT_TYPES.map(t => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="eq-serial-wrap" style="display:none">
+      <div class="form-group" style="margin-bottom:0">
+        <label style="font-size:0.75rem;color:var(--danger)">Serial Number (required)</label>
+        <input type="text" class="eq-serial" placeholder="Enter serial number...">
+      </div>
+    </div>
+  `;
+  container.appendChild(slot);
+};
+
+window.onEquipmentTypeSelected = (sel) => {
+  const slot = sel.closest('.eq-slot');
+  const wrap = slot.querySelector('.eq-serial-wrap');
+  const serialInput = slot.querySelector('.eq-serial');
+  if (sel.value) {
+    wrap.style.display = 'block';
+    serialInput.focus();
+    // Check if we need to add a new slot
+    const container = $('lem-equipment-rows');
+    const slots = container.querySelectorAll('.eq-slot');
+    const allFilled = Array.from(slots).every(s => s.querySelector('.eq-type').value);
+    if (allFilled) addEquipmentSlot();
+  } else {
+    wrap.style.display = 'none';
+  }
+};
+
+window.addBatteryRow = () => {
+  const container = $('lem-battery-rows');
+  if (!container) return;
+  const row = el('div', 'consumable-row mt-4');
+  row.innerHTML = `
+    <select class="bat-type" style="flex:2">
+      <option value="">Select type...</option>
+      ${BATTERY_TYPES.map(t => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join('')}
+    </select>
+    <input type="number" class="bat-qty" placeholder="Qty" min="1" value="1" style="flex:0.6">
+    <button onclick="this.parentElement.remove()" style="background:var(--danger);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:1rem;padding:0 8px">×</button>
+  `;
+  container.appendChild(row);
+};
+
 window.updateLEMNumber = () => {
-  const sel = $('lem-project');
-  const opt = sel.options[sel.selectedIndex];
-  const projNum = opt ? (opt.dataset.num || String(opt.value).padStart(6,'0')) : '000000';
+  const projNum = window._selectedProjNum || '000000';
   const date = $('lem-date')?.value || new Date().toISOString().slice(0,10);
   if ($('lem-number')) $('lem-number').value = generateLEMNumber(projNum, date);
 };
@@ -386,6 +540,7 @@ let lemUsersCache = [];
 window.addLabourRow = async () => {
   if (!lemUsersCache.length) lemUsersCache = await window.DR_DB.users.where('active').equals(1).toArray();
   const container = $('labour-rows');
+  const isSupervisor = currentUser.role === 'supervisor';
   const row = el('div', 'card mt-8');
   row.style.padding = '10px';
   row.innerHTML = `
@@ -396,7 +551,13 @@ window.addLabourRow = async () => {
         ${lemUsersCache.map(u => `<option value="${u.id}" data-rate="${u.hourlyRate || 0}">${escHtml(u.name)}</option>`).join('')}
       </select>
     </div>
-    <div class="form-group"><label>Title / Role</label><input type="text" class="lr-title" placeholder="e.g. Survey Technician"></div>
+    <div class="form-group">
+      <label>Title / Role</label>
+      <select class="lr-title">
+        <option value="">Select role...</option>
+        ${TITLE_ROLES.map(r => `<option value="${escHtml(r)}">${escHtml(r)}</option>`).join('')}
+      </select>
+    </div>
     <div style="margin-bottom:6px;font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Hours by Type</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
       <div class="form-group"><label style="font-size:0.75rem">Surveying</label><input type="number" class="lr-survey" min="0" step="0.5" value="0"></div>
@@ -408,32 +569,30 @@ window.addLabourRow = async () => {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px">
       <div class="form-group"><label style="font-size:0.75rem">KM Start</label><input type="number" class="lr-km-start" min="0" step="1" value="0"></div>
       <div class="form-group"><label style="font-size:0.75rem">KM Stop</label><input type="number" class="lr-km-stop" min="0" step="1" value="0"></div>
+    </div>
+    ${isSupervisor ? `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px;padding:8px;background:rgba(255,165,0,0.08);border-radius:6px;border:1px dashed var(--gold)">
+      <div style="grid-column:1/-1;font-size:0.7rem;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px">🔒 Supervisor Only</div>
       <div class="form-group"><label style="font-size:0.75rem">LOA Food ($)</label><input type="number" class="lr-loa-food" min="0" step="0.01" value="0"></div>
       <div class="form-group"><label style="font-size:0.75rem">LOA Accom ($)</label><input type="number" class="lr-loa-accom" min="0" step="0.01" value="0"></div>
-    </div>
-    <div class="form-group"><label style="font-size:0.75rem">Hourly Rate ($/hr)</label><input type="number" class="lr-rate" min="0" step="0.01" value="0"></div>
-    <button onclick="this.closest('.card').remove()" class="btn btn-danger btn-sm" style="margin-top:4px">Remove</button>
+      <div class="form-group" style="grid-column:1/-1"><label style="font-size:0.75rem">Hourly Rate ($/hr)</label><input type="number" class="lr-rate" min="0" step="0.01" value="0"></div>
+    </div>` : `
+    <input type="hidden" class="lr-loa-food" value="0">
+    <input type="hidden" class="lr-loa-accom" value="0">
+    <input type="hidden" class="lr-rate" value="0">`}
+    <button onclick="this.closest('.card').remove()" class="btn btn-danger btn-sm" style="margin-top:8px">Remove</button>
   `;
-  row.querySelector('.lr-employee').addEventListener('change', function() {
-    const opt = this.options[this.selectedIndex];
-    const rateInput = row.querySelector('.lr-rate');
-    if (opt && opt.dataset.rate) rateInput.value = opt.dataset.rate;
-  });
+  if (isSupervisor) {
+    row.querySelector('.lr-employee').addEventListener('change', function() {
+      const opt = this.options[this.selectedIndex];
+      const rateInput = row.querySelector('.lr-rate');
+      if (opt && opt.dataset.rate) rateInput.value = opt.dataset.rate;
+    });
+  }
   container.appendChild(row);
 };
 
-// Instrument rows (free-form addition beyond the checkboxes)
-window.addInstrumentRow = () => {
-  const container = $('instrument-rows');
-  const row = el('div', 'consumable-row mt-4');
-  row.innerHTML = `
-    <input type="text" placeholder="Instrument name" style="flex:2">
-    <input type="text" placeholder="Serial #" style="flex:1">
-    <input type="number" placeholder="Qty" min="1" value="1" style="flex:0.5">
-    <button onclick="this.parentElement.remove()" style="background:var(--danger);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:1rem">×</button>
-  `;
-  container.appendChild(row);
-};
+// (instrument rows replaced by equipment slots in v2.1)
 
 let consumablesCache = [];
 
@@ -522,23 +681,39 @@ window.submitLEM = async (status) => {
     const kmStop = parseFloat(row.querySelector('.lr-km-stop')?.value)  || 0;
     const loaFood= parseFloat(row.querySelector('.lr-loa-food')?.value) || 0;
     const loaAccom= parseFloat(row.querySelector('.lr-loa-accom')?.value)|| 0;
-    const title  = row.querySelector('.lr-title')?.value || '';
+    const titleSel = row.querySelector('.lr-title');
+    const title = titleSel?.value || '';
     if (empName) labourItems.push({ userId: empId, name: empName, title, survey, draft, office, other, travel, total, rate, kmStart, kmStop, loaFood, loaAccom });
   });
 
-  // Instruments from checkboxes
+  // Equipment from new slots
   const instruments = [];
-  document.querySelectorAll('.eq-check:checked').forEach(cb => {
-    instruments.push({ id: parseInt(cb.dataset.id), name: cb.dataset.name, serialNumber: cb.dataset.serial, qty: 1 });
-  });
-  // Instrument rows (free-form)
-  $('instrument-rows').querySelectorAll('.consumable-row').forEach(row => {
-    const inputs = row.querySelectorAll('input');
-    const name = inputs[0]?.value;
-    const serial = inputs[1]?.value || '';
-    const qty = parseInt(inputs[2]?.value) || 1;
-    if (name) instruments.push({ name, serialNumber: serial, qty });
-  });
+  const eqSlots = $('lem-equipment-rows');
+  if (eqSlots) {
+    eqSlots.querySelectorAll('.eq-slot').forEach(slot => {
+      const eqType = slot.querySelector('.eq-type')?.value;
+      const serial = slot.querySelector('.eq-serial')?.value?.trim() || '';
+      if (eqType) {
+        if (!serial) {
+          // Warn but don't block — serial validation is advisory
+        }
+        instruments.push({ name: eqType, serialNumber: serial, qty: 1 });
+      }
+    });
+  }
+  // Additional equipment notes
+  const equipmentNotes = $('lem-equipment-notes')?.value || '';
+
+  // Batteries
+  const batteries = [];
+  const batRows = $('lem-battery-rows');
+  if (batRows) {
+    batRows.querySelectorAll('.consumable-row').forEach(row => {
+      const batType = row.querySelector('.bat-type')?.value;
+      const qty = parseInt(row.querySelector('.bat-qty')?.value) || 1;
+      if (batType) batteries.push({ batteryType: batType, quantity: qty });
+    });
+  }
 
   // Consumables
   const consumables = [];
@@ -565,10 +740,18 @@ window.submitLEM = async (status) => {
   const canvas = $('sigCanvas');
   const signature = canvas ? canvas.toDataURL('image/png') : null;
 
+  // Validate: require serial numbers for equipment with type selected
+  const missingSerial = instruments.filter(i => i.name && i.name !== 'Other' && !i.serialNumber);
+  if (missingSerial.length > 0) {
+    toast(`Serial number required for: ${missingSerial.map(i => i.name).join(', ')}`, 'error');
+    return;
+  }
+
   const lemData = {
     lemNumber, projectId, userId: currentUser.id,
     date: $('lem-date').value,
-    labourItems, instruments, consumables, fieldSamples,
+    labourItems, instruments, batteries, consumables, fieldSamples,
+    equipmentNotes,
     notes: $('lem-notes').value,
     signature, status
   };
@@ -576,6 +759,18 @@ window.submitLEM = async (status) => {
   if (status === 'submitted') lemData.submittedAt = new Date().toISOString();
 
   const id = await createLEM(lemData);
+
+  // Save equipment to lemEquipment table
+  for (const eq of instruments) {
+    if (eq.name) {
+      await window.DR_DB.lemEquipment.add({ lemId: id, userId: currentUser.id, equipmentType: eq.name, serialNumber: eq.serialNumber || '' });
+    }
+  }
+  // Save batteries to lemBatteries table
+  for (const bat of batteries) {
+    await window.DR_DB.lemBatteries.add({ lemId: id, userId: currentUser.id, batteryType: bat.batteryType, quantity: bat.quantity });
+  }
+
   closeModal('wo-modal');
   toast(status === 'submitted' ? 'LEM submitted for approval!' : 'Draft saved', 'success');
 
@@ -593,7 +788,195 @@ window.submitLEM = async (status) => {
   navigate(currentPage);
 };
 
-window.viewLEM = (id) => { toast('LEM ' + id + ' — full view coming soon', 'info'); };
+window.viewLEM = async (id) => {
+  const lem = await window.DR_DB.lems.get(id);
+  if (!lem) return;
+  const projects = await getProjects(false);
+  const proj = projects.find(p => p.id === lem.projectId);
+  const lemEqs = await window.DR_DB.lemEquipment.where('lemId').equals(id).toArray();
+  const isSupervisor = currentUser.role === 'supervisor';
+
+  const modal = $('wo-modal-sheet');
+  const labour = lem.labourItems || [];
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">${escHtml(lem.lemNumber || `LEM-${String(id).padStart(4,'0')}`)}</div>
+    <div class="text-sm text-muted">Date: ${lem.date} • <span class="status status-${lem.status}">${lem.status}</span></div>
+    <div class="text-sm text-muted mt-4">Project: <strong>${escHtml(proj?.name || '—')}</strong></div>
+
+    ${labour.length > 0 ? `
+    <div class="section-header mt-12"><span class="section-title">Labour</span></div>
+    ${labour.map(l => `
+      <div class="card mt-4">
+        <div class="card-title" style="margin-bottom:2px">${escHtml(l.name)}</div>
+        ${l.title ? `<div class="text-sm text-muted">${escHtml(l.title)}</div>` : ''}
+        <div class="text-sm">Surveying: ${l.survey||0}h · Drafting: ${l.draft||0}h · Office: ${l.office||0}h · Other: ${l.other||0}h · Travel: ${l.travel||0}h</div>
+        <div class="text-sm"><strong>Total: ${(l.total||0).toFixed(1)}h</strong></div>
+        ${isSupervisor ? `
+        <div class="text-sm text-muted">Rate: $${(l.rate||0).toFixed(2)}/hr → <strong style="color:var(--gold)">$${((l.total||0)*(l.rate||0)).toFixed(2)}</strong></div>
+        <div class="text-sm text-muted">LOA: Food $${(l.loaFood||0).toFixed(2)} + Accom $${(l.loaAccom||0).toFixed(2)}</div>` : ''}
+      </div>`).join('')}` : ''}
+
+    ${lemEqs.length > 0 ? `
+    <div class="section-header mt-12"><span class="section-title">Equipment</span></div>
+    ${lemEqs.map(e => `<div class="list-item">
+      <div class="list-item-left">
+        <div class="list-item-title">${escHtml(e.equipmentType)}</div>
+        <div class="list-item-sub">S/N: ${escHtml(e.serialNumber || '—')}</div>
+      </div>
+    </div>`).join('')}` : ''}
+
+    ${lem.notes ? `<div class="form-group mt-12"><label>Notes</label><div class="text-sm">${escHtml(lem.notes)}</div></div>` : ''}
+
+    <button class="btn btn-ghost btn-full mt-12" onclick="closeModal('wo-modal')">Close</button>
+  `;
+  openModal('wo-modal');
+};
+
+// ─── Supervisor LEM Dashboard ─────────────────────────────────────────────────
+async function renderLEMDashboard() {
+  const container = $('page-lem-dashboard');
+  if (!container) return;
+  const scroll = container.querySelector('.page-scroll');
+  if (!scroll) return;
+
+  const allLEMs = await getAllLEMs();
+  const projects = await getProjects(false);
+  const users = await getAllUsers();
+
+  // Equipment conflict detection across active LEMs
+  const activeStatuses = ['draft','submitted','approved'];
+  const activeLEMs = allLEMs.filter(l => activeStatuses.includes(l.status));
+  const serialMap = {};
+  for (const lem of activeLEMs) {
+    const eqs = await window.DR_DB.lemEquipment.where('lemId').equals(lem.id).toArray();
+    for (const eq of eqs) {
+      if (!eq.serialNumber) continue;
+      const key = eq.serialNumber.toUpperCase();
+      if (!serialMap[key]) serialMap[key] = [];
+      serialMap[key].push({ lemNumber: lem.lemNumber, type: eq.equipmentType, date: lem.date });
+    }
+  }
+  const conflicts = Object.entries(serialMap).filter(([, lems]) => lems.length > 1);
+
+  let html = `<div class="section-header">
+    <span class="section-title">LEM Dashboard</span>
+    <span class="text-sm text-muted">${allLEMs.length} total LEMs</span>
+  </div>`;
+
+  if (conflicts.length > 0) {
+    html += `<div class="card mt-8" style="border-color:var(--danger)">
+      <div class="card-title" style="color:var(--danger)">⚠️ Equipment Conflicts (${conflicts.length})</div>
+      <div class="text-sm text-muted">Same serial number on multiple active LEMs:</div>`;
+    conflicts.forEach(([serial, lems]) => {
+      html += `<div class="mt-4" style="padding:6px;background:rgba(231,76,60,0.1);border-radius:4px">
+        <strong class="text-sm">S/N: ${escHtml(serial)}</strong>
+        <span class="text-sm text-muted"> (${escHtml(lems[0].type)})</span>`;
+      lems.forEach(l => {
+        html += `<div class="text-sm text-muted" style="margin-left:12px">• ${escHtml(l.lemNumber || 'LEM')} — ${l.date}</div>`;
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  // Summary cards
+  const totals = { draft: 0, submitted: 0, approved: 0, rejected: 0 };
+  allLEMs.forEach(l => { if (totals[l.status] !== undefined) totals[l.status]++; });
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0">
+    <div class="card" style="text-align:center;padding:10px">
+      <div style="font-size:1.5rem;font-weight:700;color:var(--gold)">${totals.submitted}</div>
+      <div class="text-sm text-muted">Awaiting Approval</div>
+    </div>
+    <div class="card" style="text-align:center;padding:10px">
+      <div style="font-size:1.5rem;font-weight:700;color:var(--success)">${totals.approved}</div>
+      <div class="text-sm text-muted">Approved</div>
+    </div>
+    <div class="card" style="text-align:center;padding:10px">
+      <div style="font-size:1.5rem;font-weight:700;color:var(--muted)">${totals.draft}</div>
+      <div class="text-sm text-muted">Drafts</div>
+    </div>
+    <div class="card" style="text-align:center;padding:10px">
+      <div style="font-size:1.5rem;font-weight:700;color:var(--danger)">${totals.rejected}</div>
+      <div class="text-sm text-muted">Rejected</div>
+    </div>
+  </div>`;
+
+  // All LEMs with full financial detail
+  html += `<div class="section-header mt-8"><span class="section-title">All LEMs — Full Financial View</span></div>`;
+
+  if (!allLEMs.length) {
+    html += `<div class="empty-state"><p>No LEMs yet</p></div>`;
+  } else {
+    for (const lem of allLEMs) {
+      const proj = projects.find(p => p.id === lem.projectId);
+      const user = users.find(u => u.id === lem.userId);
+      const labour = lem.labourItems || [];
+
+      // Calculate financials
+      let totalLabourAmt = 0;
+      let totalHrs = 0;
+      let totalLOA = 0;
+      const labourDetails = labour.map(l => {
+        const hrs = l.total || 0;
+        const rate = l.rate || 0;
+        const amt = hrs * rate;
+        const loa = (l.loaFood || 0) + (l.loaAccom || 0);
+        totalLabourAmt += amt;
+        totalHrs += hrs;
+        totalLOA += loa;
+        return { ...l, amt, loa };
+      });
+
+      // Equipment on this LEM
+      const lemEqs = await window.DR_DB.lemEquipment.where('lemId').equals(lem.id).toArray();
+
+      html += `<div class="card mt-8" style="border-color:${lem.status === 'submitted' ? 'var(--gold)' : lem.status === 'approved' ? 'var(--success)' : 'var(--border)'}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="card-title" style="margin-bottom:2px">${escHtml(lem.lemNumber || `LEM-${String(lem.id).padStart(4,'0')}`)}</div>
+            <div class="text-sm text-muted">${lem.date} • ${escHtml(proj?.name || '—')}</div>
+            <div class="text-sm text-muted">Submitted by: ${escHtml(user?.name || '—')}</div>
+          </div>
+          <span class="status status-${lem.status}">${lem.status}</span>
+        </div>
+
+        ${labourDetails.length > 0 ? `
+        <div class="divider" style="margin:8px 0"></div>
+        <div class="text-sm" style="font-weight:600;margin-bottom:4px">Labour (${totalHrs.toFixed(1)} hrs)</div>
+        ${labourDetails.map(l => `
+          <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:0.82rem;border-bottom:1px solid var(--border)">
+            <div>
+              <span>${escHtml(l.name)}</span>
+              ${l.title ? `<span class="text-muted" style="margin-left:6px;font-size:0.75rem">${escHtml(l.title)}</span>` : ''}
+              <div class="text-muted" style="font-size:0.75rem">
+                ${[l.survey ? `${l.survey}h Survey` : '', l.draft ? `${l.draft}h Draft` : '', l.office ? `${l.office}h Office` : '', l.travel ? `${l.travel}h Travel` : ''].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+            <div style="text-align:right">
+              <div style="color:var(--gold)">$${l.amt.toFixed(2)}</div>
+              <div class="text-muted" style="font-size:0.75rem">@$${(l.rate||0).toFixed(2)}/hr</div>
+              ${l.loa > 0 ? `<div style="color:var(--muted);font-size:0.75rem">LOA: $${l.loa.toFixed(2)}</div>` : ''}
+            </div>
+          </div>`).join('')}
+        <div style="display:flex;justify-content:flex-end;padding:6px 0;font-size:0.85rem">
+          <strong style="color:var(--gold)">Labour: $${totalLabourAmt.toFixed(2)} + LOA: $${totalLOA.toFixed(2)} = $${(totalLabourAmt + totalLOA).toFixed(2)}</strong>
+        </div>` : ''}
+
+        ${lemEqs.length > 0 ? `
+        <div class="text-sm text-muted" style="margin-top:4px">Equipment: ${lemEqs.map(e => `${escHtml(e.equipmentType)} (${escHtml(e.serialNumber || 'no S/N')})`).join(', ')}</div>` : ''}
+
+        ${lem.status === 'submitted' ? `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+          <button class="btn btn-danger btn-sm" onclick="rejectLEM(${lem.id})">Reject</button>
+          <button class="btn btn-success btn-sm" onclick="approveLEM(${lem.id})">Approve & PDF</button>
+        </div>` : ''}
+      </div>`;
+    }
+  }
+
+  scroll.innerHTML = html;
+}
 
 // ─── Equipment Page ───────────────────────────────────────────────────────────
 async function renderEquipment() {
@@ -606,27 +989,53 @@ async function renderEquipment() {
     <button class="btn btn-primary btn-sm" onclick="openAddEquipmentModal()">+ Add</button>
   </div>`;
 
+  // Check for equipment conflicts (same serial on multiple active LEMs)
+  let conflicts = {};
+  if (currentUser.role === 'supervisor') {
+    const activeLEMs = await window.DR_DB.lems.where('status').anyOf(['submitted','approved']).toArray();
+    const serialMap = {};
+    for (const lem of activeLEMs) {
+      const lemEqs = await window.DR_DB.lemEquipment.where('lemId').equals(lem.id).toArray();
+      for (const leq of lemEqs) {
+        if (!leq.serialNumber) continue;
+        const key = leq.serialNumber.toUpperCase();
+        if (!serialMap[key]) serialMap[key] = [];
+        serialMap[key].push({ lemNumber: lem.lemNumber, userId: lem.userId });
+      }
+    }
+    for (const [serial, lems] of Object.entries(serialMap)) {
+      if (lems.length > 1) conflicts[serial] = lems;
+    }
+  }
+
+  if (Object.keys(conflicts).length > 0) {
+    html += `<div class="card mt-8" style="border-color:var(--danger)">
+      <div class="card-title" style="color:var(--danger)">⚠️ Equipment Conflicts Detected</div>`;
+    for (const [serial, lems] of Object.entries(conflicts)) {
+      html += `<div class="text-sm mt-4"><strong>S/N: ${escHtml(serial)}</strong> appears on multiple active LEMs:</div>`;
+      lems.forEach(l => { html += `<div class="text-sm text-muted" style="margin-left:12px">• ${escHtml(l.lemNumber || 'LEM')}</div>`; });
+    }
+    html += '</div>';
+  }
+
   if (!equipment.length) {
     html += `<div class="empty-state">${svgWrench()}<p>No equipment listed</p></div>`;
   } else {
     equipment.forEach(eq => {
       const assignedUser = users.find(u => u.id === eq.assignedTo);
-      const batteryDisplay = eq.batteryStatus !== null && eq.batteryStatus !== undefined
-        ? `🔋 ${eq.batteryStatus}%` : '—';
       const statusColor = eq.status === 'available' ? 'var(--success)' : eq.status === 'in-use' ? 'var(--gold)' : 'var(--danger)';
 
       html += `<div class="card mt-8">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
           <div>
             <div class="card-title" style="margin-bottom:2px">${escHtml(eq.name)}</div>
-            <div class="text-sm text-muted">S/N: ${escHtml(eq.serialNumber || '—')}</div>
-            <div class="text-sm text-muted">${batteryDisplay} • <span style="color:${statusColor}">${eq.status}</span></div>
+            ${eq.serialNumber ? `<div class="text-sm text-muted">S/N: ${escHtml(eq.serialNumber)}</div>` : ''}
+            <div class="text-sm" style="color:${statusColor};margin-top:2px">${eq.status}</div>
             ${assignedUser ? `<div class="text-sm" style="color:var(--gold);margin-top:2px">Assigned to: ${escHtml(assignedUser.name)}</div>` : ''}
             ${eq.serviceNote ? `<div class="text-sm" style="color:var(--warning);margin-top:4px">⚠️ Service: ${escHtml(eq.serviceNote)}</div>` : ''}
             ${eq.replacementRequired ? `<div class="text-sm" style="color:var(--danger)">🔴 Replacement Required</div>` : ''}
           </div>
           <div style="display:flex;flex-direction:column;gap:6px">
-            <button class="btn btn-sm btn-outline" onclick="editEquipmentBattery(${eq.id}, ${eq.batteryStatus || 0})">🔋 Update</button>
             <button class="btn btn-sm btn-outline" onclick="openServiceModal(${eq.id}, '${escHtml(eq.name)}')">🔧 Service</button>
           </div>
         </div>
@@ -647,10 +1056,21 @@ window.openAddEquipmentModal = () => {
   const modal = $('equipment-modal-sheet');
   modal.innerHTML = `
     <div class="modal-handle"></div>
-    <div class="modal-title">Add Equipment</div>
-    <div class="form-group"><label>Equipment Name</label><input type="text" id="eq-name" placeholder="e.g. Total Station"></div>
-    <div class="form-group"><label>Serial Number</label><input type="text" id="eq-serial" placeholder="S/N"></div>
-    <div class="form-group"><label>Battery Status (%)</label><input type="number" id="eq-battery" min="0" max="100" value="100"></div>
+    <div class="modal-title">Add Equipment to Fleet</div>
+    <div class="form-group">
+      <label>Equipment Type</label>
+      <select id="eq-type" onchange="onAddEqTypeChange(this)">
+        <option value="">Select type...</option>
+        ${EQUIPMENT_TYPES.map(t => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join('')}
+      </select>
+    </div>
+    <div id="eq-serial-wrap" style="display:none">
+      <div class="form-group">
+        <label style="color:var(--danger)">Serial Number (required)</label>
+        <input type="text" id="eq-serial" placeholder="Enter serial number...">
+      </div>
+    </div>
+    <div class="form-group"><label>Notes (optional)</label><input type="text" id="eq-notes" placeholder="Any notes about this unit"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
       <button class="btn btn-ghost" onclick="closeModal('equipment-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveEquipment()">Add</button>
@@ -659,28 +1079,26 @@ window.openAddEquipmentModal = () => {
   openModal('equipment-modal');
 };
 
-window.saveEquipment = async () => {
-  const name = $('eq-name').value.trim();
-  if (!name) { toast('Name required', 'error'); return; }
-  await window.DR_DB.equipment.add({
-    name,
-    serialNumber: $('eq-serial').value.trim(),
-    batteryStatus: parseInt($('eq-battery').value) || 100,
-    status: 'available', active: true, assignedTo: null,
-    serviceNote: null, replacementRequired: false
-  });
-  closeModal('equipment-modal');
-  toast('Equipment added', 'success');
-  renderEquipment();
+window.onAddEqTypeChange = (sel) => {
+  $('eq-serial-wrap').style.display = sel.value ? 'block' : 'none';
+  if (sel.value) $('eq-serial').focus();
 };
 
-window.editEquipmentBattery = async (id, current) => {
-  const val = prompt(`Update battery status (current: ${current}%):`, current);
-  if (val === null) return;
-  const pct = Math.max(0, Math.min(100, parseInt(val)));
-  if (isNaN(pct)) { toast('Invalid value', 'error'); return; }
-  await window.DR_DB.equipment.update(id, { batteryStatus: pct });
-  toast('Battery updated', 'success');
+window.saveEquipment = async () => {
+  const type = $('eq-type')?.value || '';
+  const serial = $('eq-serial')?.value?.trim() || '';
+  if (!type) { toast('Select an equipment type', 'error'); return; }
+  if (!serial) { toast('Serial number is required', 'error'); return; }
+  const notes = $('eq-notes')?.value?.trim() || '';
+  await window.DR_DB.equipment.add({
+    name: type + (serial ? ` (${serial})` : ''),
+    type,
+    serialNumber: serial,
+    status: 'available', active: true, assignedTo: null,
+    serviceNote: notes || null, replacementRequired: false
+  });
+  closeModal('equipment-modal');
+  toast('Equipment added to fleet', 'success');
   renderEquipment();
 };
 
@@ -1075,13 +1493,24 @@ async function renderProjects() {
   container.innerHTML = html;
 }
 
-window.openNewProjectModal = () => {
+window.openNewProjectModal = async () => {
+  const autoNum = await generateProjectNumber();
+  // Peek but don't commit yet — will commit on save
+  const yy = String(new Date().getFullYear()).slice(2);
+  const counterKey = `projectCounter_${yy}`;
+  const current = await window.DR_DB.settings.get(counterKey);
+  // Decrement back — generateProjectNumber already incremented, we'll re-increment on save
+  if (current) await window.DR_DB.settings.put({ key: counterKey, value: current.value - 1 });
+
   const modal = $('project-modal-sheet');
   modal.innerHTML = `
     <div class="modal-handle"></div>
     <div class="modal-title">New Project</div>
     <div class="form-group"><label>Project Name</label><input type="text" id="proj-name" placeholder="e.g. Highway 40 Survey"></div>
-    <div class="form-group"><label>Project Number</label><input type="text" id="proj-number" placeholder="e.g. 240205"></div>
+    <div class="form-group">
+      <label>Project Number <span style="color:var(--muted);font-size:0.75rem">(auto-generated, can override)</span></label>
+      <input type="text" id="proj-number" value="${escHtml(autoNum)}" placeholder="e.g. 260001">
+    </div>
     <div class="form-group"><label>Client Name</label><input type="text" id="proj-client" placeholder="Client company name"></div>
     <div class="form-group"><label>Client Email</label><input type="email" id="proj-email" placeholder="client@company.com"></div>
     <div class="form-group"><label>Billable Travel Rate ($/km)</label><input type="number" id="proj-travel-rate" min="0" step="0.01" value="0"></div>
@@ -1097,9 +1526,11 @@ window.openNewProjectModal = () => {
 window.saveProject = async () => {
   const name = $('proj-name').value.trim();
   if (!name) { toast('Project name is required', 'error'); return; }
+  // If user kept auto-number, regenerate to claim it; otherwise use their override
+  const projNumber = $('proj-number').value.trim() || await generateProjectNumber();
   await createProject({
     name,
-    projectNumber: $('proj-number').value.trim(),
+    projectNumber: projNumber,
     clientName: $('proj-client').value.trim(),
     clientEmail: $('proj-email').value.trim(),
     travelRate: parseFloat($('proj-travel-rate').value) || 0,
@@ -1107,7 +1538,7 @@ window.saveProject = async () => {
     createdBy: currentUser.id
   });
   closeModal('project-modal');
-  toast('Project created', 'success');
+  toast(`Project created — #${projNumber}`, 'success');
   renderProjects();
 };
 
@@ -1144,15 +1575,103 @@ async function renderSafetyPage() {
   container.innerHTML = html;
 }
 
+// ─── FLHA Hazard Categories (48 total) ───────────────────────────────────────
+const FLHA_CATEGORIES = [
+  {
+    title: 'Environmental',
+    color: '#2ecc71',
+    items: [
+      '1. Extreme heat / sun exposure',
+      '2. Extreme cold / wind chill',
+      '3. Rain / wet / slippery conditions',
+      '4. Lightning / electrical storm',
+      '5. High winds / gusts',
+      '6. Poor visibility / fog / dust',
+      '7. Icy / frozen surfaces',
+      '8. Wildlife / animal hazards',
+      '9. Insects / vector-borne hazards',
+      '10. Terrain hazards (slopes, ditches, soft ground)',
+      '11. Flooding / standing water / spring thaw'
+    ]
+  },
+  {
+    title: 'Ergonomic',
+    color: '#3498db',
+    items: [
+      '12. Awkward posture / body positioning',
+      '13. Manual material handling',
+      '14. Heavy lifting / lowering',
+      '15. Repetitive motion / strain',
+      '16. Prolonged standing / walking on uneven ground',
+      '17. Hand-arm vibration (equipment use)',
+      '18. Fatigue / physical exertion'
+    ]
+  },
+  {
+    title: 'Access / Egress',
+    color: '#e67e22',
+    items: [
+      '19. Uneven / unstable ground surface',
+      '20. Working at elevation (banks, embankments)',
+      '21. Confined / restricted space',
+      '22. Trenches / excavations nearby',
+      '23. Unimproved / off-road access',
+      '24. Entering / exiting vehicles or equipment',
+      '25. Slip, trip and fall hazards (debris, cables, stakes)'
+    ]
+  },
+  {
+    title: 'Overhead',
+    color: '#9b59b6',
+    items: [
+      '26. Overhead power lines (within 7m)',
+      '27. Falling objects / tools from above',
+      '28. Suspended loads / rigging overhead',
+      '29. Low clearance structures / bridges',
+      '30. Unstable overhead tree branches / widowmakers',
+      '31. Low-flying aircraft / helicopter operations',
+      '32. Birds / nests / wasp nests overhead'
+    ]
+  },
+  {
+    title: 'Rigging & Hoisting',
+    color: '#e74c3c',
+    items: [
+      '33. Improper rigging / incorrect sling angle',
+      '34. Load swinging / unexpected movement',
+      '35. Equipment overload / capacity exceeded',
+      '36. Ground instability under crane / equipment',
+      '37. Communication failure during lift',
+      '38. Tag line control / load management'
+    ]
+  },
+  {
+    title: 'Electrical',
+    color: '#f39c12',
+    items: [
+      '39. Buried / underground utilities (gas, power, telecom)',
+      '40. Overhead conductors / energized lines',
+      '41. Ground fault / stray current / current leakage',
+      '42. Equipment power failure or malfunction',
+      '43. Temporary power sources / generators',
+      '44. Electromagnetic interference (GPS, radio equipment)'
+    ]
+  },
+  {
+    title: 'Personal Limitations',
+    color: '#1abc9c',
+    items: [
+      '45. Fatigue / insufficient rest (< 8 hours)',
+      '46. Physical impairment / existing injury',
+      '47. Medication effects / substance impairment',
+      '48. Lack of training / unfamiliarity with task'
+    ]
+  }
+];
+
 window.openSafetyForm = (type) => {
   const modal = $('safety-modal-sheet');
-  const titles = { fitforwork: 'Fit for Work Assessment', flha: 'Field Level Hazard Assessment', jha: 'Job Hazard Analysis', hazard: 'Hazard Report' };
-  const hazardCategories = [
-    'Fall / Trip hazards', 'Moving equipment / vehicles', 'Electrical hazards',
-    'Chemical / substance exposure', 'Extreme weather conditions', 'Wildlife / animal hazards',
-    'Manual handling / ergonomics', 'Overhead hazards', 'Underground hazards / utilities',
-    'Unstable ground / terrain', 'Traffic management', 'Lone worker risks'
-  ];
+  const titles = { fitforwork: 'Fit for Work Assessment', flha: 'Field Level Hazard Assessment (FLHA)', jha: 'Job Hazard Analysis', hazard: 'Hazard Report' };
 
   let formHtml = `<div class="modal-handle"></div>
     <div class="modal-title">${titles[type] || type.toUpperCase()}</div>
@@ -1165,11 +1684,57 @@ window.openSafetyForm = (type) => {
     <div class="form-group"><label>Any concerns?</label><textarea id="sf-notes" placeholder="Optional notes..."></textarea></div>`;
   }
 
-  if (type === 'flha' || type === 'jha') {
+  if (type === 'flha') {
+    // Full Keltic FLHA form
+    formHtml += `
+    <div class="form-group"><label>Company</label><input type="text" id="sf-company" value="Keltic Geomatics" placeholder="Company name"></div>
+    <div class="form-group"><label>Work Description</label><input type="text" id="sf-task" placeholder="Describe the scope of work"></div>
+    <div class="form-group"><label>Task Location / Site</label><input type="text" id="sf-location" placeholder="Site address or description"></div>
+    <div class="form-group"><label>Muster Point</label><input type="text" id="sf-muster" placeholder="Emergency assembly point"></div>
+    <div class="form-group"><label>PPE Inspected?</label>
+      <select id="sf-ppe"><option value="yes">Yes — all PPE inspected and serviceable</option><option value="partial">Partial — some items missing</option><option value="no">No — PPE not inspected</option></select>
+    </div>
+
+    <div style="margin:12px 0;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">
+      ⚠️ STOP &amp; THINK — Hazard Identification (check all that apply)
+    </div>
+
+    ${FLHA_CATEGORIES.map(cat => `
+      <div style="margin-bottom:8px">
+        <div style="background:${cat.color};color:#fff;padding:6px 10px;border-radius:4px;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">
+          ${cat.title}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px">
+          ${cat.items.map((item, i) => `
+            <label style="display:flex;align-items:flex-start;gap:6px;font-size:0.78rem;text-transform:none;letter-spacing:0;padding:4px 6px;cursor:pointer;border-radius:4px">
+              <input type="checkbox" class="flha-haz" data-cat="${escHtml(cat.title)}" data-item="${escHtml(item)}" style="margin-top:2px;flex-shrink:0">
+              <span>${escHtml(item)}</span>
+            </label>`).join('')}
+        </div>
+      </div>`).join('')}
+
+    <div style="margin-top:12px;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">Tasks / Hazards / Controls</div>
+    <div id="sf-task-rows"></div>
+    <button class="btn btn-sm btn-outline mt-4" onclick="addFLHATaskRow()">+ Add Task Row</button>
+
+    <div class="form-group mt-12"><label>Additional Notes / Controls</label>
+      <textarea id="sf-controls" placeholder="Additional hazard controls, emergency procedures..." rows="3"></textarea>
+    </div>
+
+    <div style="margin-top:12px;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">Crew — Print Name &amp; Sign</div>
+    <div id="sf-crew-rows"></div>
+    <button class="btn btn-sm btn-outline mt-4" onclick="addFLHACrewRow()">+ Add Crew Member</button>
+
+    <div style="margin-top:12px;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">Job Completion</div>
+    <div class="card mt-4">
+      ${['All tools and equipment accounted for','Site left clean — no debris or hazards remaining','PPE removed and stored properly','Crew members returned safe','Supervisor notified of completion'].map(item =>
+        `<div class="toggle-row"><span class="toggle-label" style="font-size:0.85rem">${item}</span><button class="toggle" onclick="toggleBtn(this,null)"></button></div>`
+      ).join('')}
+    </div>`;
+  }
+
+  if (type === 'jha') {
     formHtml += `<div class="form-group"><label>Task Description</label><input type="text" id="sf-task" placeholder="Describe the work being performed"></div>
-      <div class="card"><div class="card-title">Hazards Present</div>
-        ${hazardCategories.map((h, i) => `<div class="toggle-row"><span class="toggle-label">${h}</span><button class="toggle" id="haz-${i}" onclick="toggleBtn(this,null)"></button></div>`).join('')}
-      </div>
       <div class="form-group"><label>Controls / Mitigations</label><textarea id="sf-controls" placeholder="How are hazards being controlled?"></textarea></div>
       <div class="form-group"><label>Emergency Assembly Point</label><input type="text" id="sf-assembly"></div>`;
   }
@@ -1185,536 +1750,76 @@ window.openSafetyForm = (type) => {
       <div class="form-group"><label>Immediate Action Taken</label><textarea id="sf-action" placeholder="What did you do?"></textarea></div>`;
   }
 
-  formHtml += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+  formHtml += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:16px">
     <button class="btn btn-ghost" onclick="closeModal('safety-modal')">Cancel</button>
+    ${type === 'flha' ? `<button class="btn btn-outline" onclick="printFLHA()">🖨️ Print / PDF</button>` : '<div></div>'}
     <button class="btn btn-success" onclick="submitSafetyForm('${type}')">Submit</button>
   </div>`;
 
   modal.innerHTML = formHtml;
+
+  if (type === 'flha') {
+    addFLHATaskRow();
+    addFLHACrewRow();
+  }
+
   openModal('safety-modal');
 };
 
-window.submitSafetyForm = async (type) => {
-  const projects = await getProjects();
-  const date = $('sf-date')?.value || new Date().toISOString().slice(0,10);
-  await window.DR_DB.safetyForms.add({
-    userId: currentUser.id, type, date,
-    projectId: projects[0]?.id || null,
-    notes: $('sf-notes')?.value || $('sf-hazard-desc')?.value || '',
-    task: $('sf-task')?.value || '',
-    controls: $('sf-controls')?.value || '',
-    status: 'submitted', syncStatus: 'pending',
-    createdAt: new Date().toISOString()
-  });
-  closeModal('safety-modal');
-  toast('Safety form submitted', 'success');
-  renderSafetyPage();
-};
-
-// ─── Receipts ─────────────────────────────────────────────────────────────────
-async function renderReceiptsPage() {
-  const container = $('page-receipts').querySelector('.page-scroll');
-  const receipts = await window.DR_DB.receipts.where('userId').equals(currentUser.id).reverse().sortBy('date');
-
-  let html = `<div class="section-header">
-    <span class="section-title">Receipts</span>
-    <button class="btn btn-primary btn-sm" onclick="openReceiptModal()">+ Add</button>
-  </div>`;
-
-  if (!receipts.length) {
-    html += `<div class="empty-state">${svgReceipt()}<p>No receipts yet</p></div>`;
-  } else {
-    receipts.forEach(r => {
-      html += `<div class="list-item">
-        <div class="list-item-left">
-          <div class="list-item-title">$${Number(r.amount).toFixed(2)} — ${r.date}</div>
-          <div class="list-item-sub">${r.billable ? '💰 Billable' : '🏢 Non-billable'} • ${r.description || '—'}</div>
-        </div>
-        <span class="status status-${r.status || 'submitted'}">${r.status || 'submitted'}</span>
-      </div>`;
-    });
-  }
-
-  container.innerHTML = html;
-}
-
-window.openReceiptModal = async () => {
-  const projects = await getProjects();
-  const modal = $('receipt-modal-sheet');
-  modal.innerHTML = `
-    <div class="modal-handle"></div>
-    <div class="modal-title">Submit Receipt</div>
-    <div class="form-group"><label>Date</label><input type="date" id="rec-date" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div class="form-group"><label>Amount ($)</label><input type="number" id="rec-amount" min="0" step="0.01" placeholder="0.00"></div>
-    <div class="form-group"><label>Description / Vendor</label><input type="text" id="rec-desc" placeholder="e.g. Fuel - Petro Canada"></div>
-    <div class="toggle-row">
-      <span class="toggle-label">Billable to Client?</span>
-      <button class="toggle" id="tog-rec-billable" onclick="toggleBillable(this)"></button>
-    </div>
-    <div id="rec-project-wrap" style="display:none;margin-top:10px" class="form-group">
-      <label>Bill to Project</label>
-      <select id="rec-project">
-        <option value="">Select project...</option>
-        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
-      </select>
-    </div>
-    <div class="form-group mt-12">
-      <label>Receipt Photo</label>
-      <input type="file" id="rec-photo" accept="image/*" capture="environment" style="background:transparent;border:1.5px dashed var(--gold);padding:12px;cursor:pointer">
-      <div id="rec-photo-preview" style="margin-top:8px"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
-      <button class="btn btn-ghost" onclick="closeModal('receipt-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="submitReceipt()">Submit</button>
-    </div>
-  `;
-
-  $('rec-photo').addEventListener('change', function() {
-    const file = this.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      $('rec-photo-preview').innerHTML = `<img src="${e.target.result}" style="max-width:100%;border-radius:8px;max-height:150px">`;
-    };
-    reader.readAsDataURL(file);
-  });
-
-  openModal('receipt-modal');
-};
-
-window.toggleBillable = (btn) => {
-  btn.classList.toggle('on');
-  $('rec-project-wrap').style.display = btn.classList.contains('on') ? 'block' : 'none';
-};
-
-window.submitReceipt = async () => {
-  const amount = parseFloat($('rec-amount').value);
-  if (!amount || isNaN(amount)) { toast('Please enter an amount', 'error'); return; }
-  const billable = $('tog-rec-billable').classList.contains('on');
-  const receipt = {
-    userId: currentUser.id, date: $('rec-date').value,
-    amount, description: $('rec-desc').value,
-    billable, projectId: billable ? parseInt($('rec-project').value) || null : null,
-    status: 'submitted', syncStatus: 'pending', submittedAt: new Date().toISOString()
-  };
-  const id = await window.DR_DB.receipts.add(receipt);
-  receipt.id = id;
-  const file = $('rec-photo').files[0];
-  if (file) { try { await uploadReceiptPhoto(file, receipt, currentUser.name); } catch(e) {} }
-  const supervisors = await window.DR_DB.users.where('role').equals('supervisor').toArray();
-  for (const sup of supervisors) {
-    await window.DR_DB.notifications.add({
-      toUserId: sup.id, fromUserId: currentUser.id,
-      message: `${currentUser.name} submitted a ${billable ? 'billable' : 'non-billable'} receipt of $${amount.toFixed(2)}`,
-      scheduledAt: new Date().toISOString(), read: false, type: 'receipt'
-    });
-  }
-  closeModal('receipt-modal');
-  toast('Receipt submitted', 'success');
-  renderReceiptsPage();
-};
-
-// ─── Photos ───────────────────────────────────────────────────────────────────
-async function renderPhotosPage() {
-  const container = $('page-photos').querySelector('.page-scroll');
-  const projects = await getProjects();
-
-  let html = `<div class="section-header"><span class="section-title">Site Photos</span></div>
-  <div class="card">
-    <div class="form-group">
-      <label>Project</label>
-      <select id="photo-project">
-        <option value="">Select project...</option>
-        ${projects.map(p => `<option value="${p.id}" data-name="${escHtml(p.name)}">${escHtml(p.name)}</option>`).join('')}
-      </select>
-    </div>
-    <div class="form-group">
-      <label>Photos</label>
-      <input type="file" id="photo-input" accept="image/*" capture="environment" multiple style="background:transparent;border:1.5px dashed var(--gold);padding:12px;cursor:pointer">
-    </div>
-    <div id="photo-previews" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px"></div>
-    <button class="btn btn-primary btn-full mt-12" onclick="uploadPhotos()">Upload to OneDrive</button>
-  </div>`;
-
-  const recentPhotos = await window.DR_DB.photos.where('userId').equals(currentUser.id).reverse().limit(20).sortBy('takenAt');
-  if (recentPhotos.length) {
-    html += `<div class="section-header mt-12"><span class="section-title">Uploaded</span></div>`;
-    recentPhotos.forEach(p => {
-      html += `<div class="list-item">
-        <div class="list-item-left">
-          <div class="list-item-title">${p.filename}</div>
-          <div class="list-item-sub">${p.takenAt?.slice(0,10)} • ${p.syncStatus === 'synced' ? '☁️ OneDrive' : '📱 Pending'}</div>
-        </div>
-      </div>`;
-    });
-  }
-
-  container.innerHTML = html;
-
-  $('photo-input').addEventListener('change', function() {
-    const previews = $('photo-previews');
-    previews.innerHTML = '';
-    Array.from(this.files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = e => {
-        previews.innerHTML += `<img src="${e.target.result}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px">`;
-      };
-      reader.readAsDataURL(file);
-    });
-  });
-}
-
-window.uploadPhotos = async () => {
-  const input = $('photo-input');
-  const projectSel = $('photo-project');
-  const projectName = projectSel.options[projectSel.selectedIndex]?.dataset.name || 'General';
-  if (!input.files.length) { toast('Select photos first', 'error'); return; }
-  let count = await window.DR_DB.photos.where('userId').equals(currentUser.id).count();
-  for (const file of input.files) {
-    count++;
-    const filename = await uploadSitePhoto(file, projectName, currentUser.name, count).catch(() => null);
-    await window.DR_DB.photos.add({
-      userId: currentUser.id, projectId: parseInt(projectSel.value) || null,
-      filename: `${currentUser.name.replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}_${String(count).padStart(3,'0')}`,
-      takenAt: new Date().toISOString(), syncStatus: filename ? 'synced' : 'pending'
-    });
-  }
-  toast(`${input.files.length} photo(s) uploaded`, 'success');
-  renderPhotosPage();
-};
-
-// ─── Staff management ─────────────────────────────────────────────────────────
-async function renderStaff() {
-  const container = $('page-staff').querySelector('.page-scroll');
-  const users = await getAllUsers();
-
-  let html = `<div class="section-header">
-    <span class="section-title">Staff</span>
-    <button class="btn btn-primary btn-sm" onclick="openAddStaffModal()">+ Add</button>
-  </div>`;
-
-  users.forEach(u => {
-    html += `<div class="list-item">
-      <div class="list-item-left" onclick="viewEmployeeProfile(${u.id})" style="cursor:pointer;flex:1">
-        <div class="list-item-title">${escHtml(u.name)}</div>
-        <div class="list-item-sub">${u.role} • ${u.province || '—'} • ${u.hourlyRate ? '$' + u.hourlyRate + '/hr' : 'rate not set'}</div>
-        <div class="list-item-sub" style="font-size:0.75rem">${u.email || '—'}</div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-        <button class="btn btn-sm btn-ghost" onclick="viewEmployeeProfile(${u.id})">Profile</button>
-        <button class="btn btn-sm btn-ghost" onclick="openSendReminderModal(${u.id},'${escHtml(u.name)}')">🔔 Ping</button>
-        <button class="btn btn-sm btn-danger" onclick="deactivateUser(${u.id})">Remove</button>
-      </div>
-    </div>`;
-  });
-
-  html += `<div class="section-header mt-16"><span class="section-title">Send Reminder</span></div>
-  <div class="card">
-    <div class="form-group"><label>Message</label><textarea id="reminder-msg" placeholder="Reminder message..."></textarea></div>
-    <div class="form-group"><label>Schedule For</label><input type="datetime-local" id="reminder-time"></div>
-    <div class="toggle-row">
-      <span class="toggle-label">Send to ALL staff</span>
-      <button class="toggle" id="tog-all-staff" onclick="toggleBtn(this,'reminder-individual')"></button>
-    </div>
-    <div id="reminder-individual">
-      <div class="form-group mt-8"><label>Or Select Specific Staff</label>
-        <select id="reminder-user">
-          ${users.filter(u => u.id !== currentUser.id).map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('')}
+window.addFLHATaskRow = () => {
+  const container = $('sf-task-rows');
+  if (!container) return;
+  const row = el('div', 'card mt-4');
+  row.style.padding = '8px';
+  row.innerHTML = `
+    <div style="display:grid;grid-template-columns:2fr 2fr 1fr 2fr;gap:6px;align-items:start">
+      <div class="form-group" style="margin:0"><label style="font-size:0.7rem">Task Step</label><input type="text" class="ft-task" placeholder="Task step"></div>
+      <div class="form-group" style="margin:0"><label style="font-size:0.7rem">Hazard</label><input type="text" class="ft-hazard" placeholder="Hazard identified"></div>
+      <div class="form-group" style="margin:0"><label style="font-size:0.7rem">Priority</label>
+        <select class="ft-priority">
+          <option value="L">L</option><option value="M">M</option><option value="H">H</option>
         </select>
       </div>
+      <div class="form-group" style="margin:0"><label style="font-size:0.7rem">Control Measure</label><input type="text" class="ft-control" placeholder="Control / mitigation"></div>
     </div>
-    <button class="btn btn-primary btn-full mt-8" onclick="sendReminder()">Send Reminder</button>
-  </div>`;
-
-  container.innerHTML = html;
-  $('reminder-time').value = new Date(Date.now() + 60000).toISOString().slice(0,16);
-}
-
-window.sendReminder = async () => {
-  const msg = $('reminder-msg').value.trim();
-  if (!msg) { toast('Enter a message', 'error'); return; }
-  const allStaff = $('tog-all-staff').classList.contains('on');
-  const scheduledAt = $('reminder-time').value ? new Date($('reminder-time').value).toISOString() : new Date().toISOString();
-  const users = allStaff ? await getAllUsers() : [{ id: parseInt($('reminder-user').value) }];
-  for (const u of users) {
-    if (u.id === currentUser.id) continue;
-    await window.DR_DB.notifications.add({
-      toUserId: u.id, fromUserId: currentUser.id, message: msg,
-      scheduledAt, read: false, type: 'reminder'
-    });
-  }
-  toast(`Reminder scheduled for ${users.length} staff`, 'success');
-  $('reminder-msg').value = '';
-};
-
-window.deactivateUser = async (id) => {
-  if (!confirm('Remove this staff member?')) return;
-  await window.DR_DB.users.update(id, { active: false });
-  toast('Staff member removed', 'info');
-  renderStaff();
-};
-
-window.openAddStaffModal = () => {
-  const PROVINCES = ['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'];
-  const modal = $('staff-modal-sheet');
-  modal.innerHTML = `
-    <div class="modal-handle"></div>
-    <div class="modal-title">Add Staff Member</div>
-    <div class="form-group"><label>Full Name</label><input type="text" id="staff-name" placeholder="Full name"></div>
-    <div class="form-group"><label>Username</label><input type="text" id="staff-username" placeholder="login username"></div>
-    <div class="form-group"><label>Password</label><input type="password" id="staff-pass" placeholder="Temporary password"></div>
-    <div class="form-group"><label>Email</label><input type="email" id="staff-email" placeholder="email@company.com"></div>
-    <div class="form-group"><label>Role</label>
-      <select id="staff-role"><option value="field">Field Staff</option><option value="supervisor">Supervisor</option></select>
-    </div>
-    <div class="form-group"><label>Hourly Rate ($/hr)</label><input type="number" id="staff-rate" min="0" step="0.01" placeholder="e.g. 55.00"></div>
-    <div class="form-group"><label>Province</label>
-      <select id="staff-province">
-        ${PROVINCES.map(p => `<option value="${p}"${p === 'BC' ? ' selected' : ''}>${p}</option>`).join('')}
-      </select>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
-      <button class="btn btn-ghost" onclick="closeModal('staff-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="addStaff()">Add</button>
-    </div>
-  `;
-  openModal('staff-modal');
-};
-
-window.addStaff = async () => {
-  const name = $('staff-name').value.trim();
-  const username = $('staff-username').value.trim().toLowerCase();
-  if (!name || !username) { toast('Name and username required', 'error'); return; }
-  const exists = await window.DR_DB.users.where('username').equals(username).first();
-  if (exists) { toast('Username already taken', 'error'); return; }
-  await window.DR_DB.users.add({
-    name, username, password: $('staff-pass').value,
-    email: $('staff-email').value, role: $('staff-role').value,
-    hourlyRate: parseFloat($('staff-rate').value) || 0,
-    province: $('staff-province').value,
-    active: true
-  });
-  closeModal('staff-modal');
-  toast('Staff member added', 'success');
-  renderStaff();
-};
-
-window.openSendReminderModal = (userId, name) => {
-  toast(`Use the reminder section below to ping ${name}`, 'info');
-};
-
-// ─── Invoicing ────────────────────────────────────────────────────────────────
-async function renderInvoicing() {
-  const container = $('page-invoicing').querySelector('.page-scroll');
-  const invoices = await window.DR_DB.invoices.toArray();
-  const projects = await getProjects(false);
-
-  let html = `<div class="section-header">
-    <span class="section-title">Invoices</span>
-    <button class="btn btn-primary btn-sm" onclick="openNewInvoiceModal()">+ New</button>
-  </div>`;
-
-  if (!invoices.length) {
-    html += `<div class="empty-state">${svgDoc()}<p>No invoices yet</p></div>`;
-  } else {
-    for (const inv of invoices) {
-      const proj = projects.find(p => p.id === inv.projectId);
-      html += `<div class="list-item" onclick="viewInvoice(${inv.id})">
-        <div class="list-item-left">
-          <div class="list-item-title">INV-${String(inv.id).padStart(4,'0')} — ${escHtml(proj?.name || '—')}</div>
-          <div class="list-item-sub">$${Number(inv.total || 0).toFixed(2)} • ${inv.createdAt?.slice(0,10)}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span class="status status-${inv.status}">${inv.status}</span>
-          <span class="chevron">›</span>
-        </div>
-      </div>`;
-    }
-  }
-
-  container.innerHTML = html;
-}
-
-window.openNewInvoiceModal = async () => {
-  const projects = await getProjects(false);
-  const modal = $('invoice-modal-sheet');
-  modal.innerHTML = `
-    <div class="modal-handle"></div>
-    <div class="modal-title">New Invoice</div>
-    <div class="form-group"><label>Project</label>
-      <select id="inv-project" onchange="loadApprovedLEMs(this.value)">
-        <option value="">Select project...</option>
-        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
-      </select>
-    </div>
-    <div id="inv-lem-section" style="display:none">
-      <div class="section-header mt-8"><span class="section-title">Attach LEMs</span></div>
-      <div id="inv-lem-list"></div>
-    </div>
-    <div class="section-header mt-8"><span class="section-title">Line Items</span>
-      <button class="btn btn-sm btn-outline" onclick="addInvLine()">+ Add Line</button>
-    </div>
-    <div id="inv-lines"></div>
-    <div class="form-group mt-8"><label>Payment Terms</label>
-      <select id="inv-terms">
-        <option value="30 days net">30 days net</option>
-        <option value="15 days net">15 days net</option>
-        <option value="Due on receipt">Due on receipt</option>
-      </select>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
-      <button class="btn btn-ghost" onclick="closeModal('invoice-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveInvoice()">Create Invoice</button>
-    </div>
-  `;
-  openModal('invoice-modal');
-};
-
-window.loadApprovedLEMs = async (projectId) => {
-  if (!projectId) return;
-  const lems = await window.DR_DB.lems.where('projectId').equals(parseInt(projectId)).filter(l => l.status === 'approved').toArray();
-  const section = $('inv-lem-section');
-  const list = $('inv-lem-list');
-  section.style.display = 'block';
-  if (!lems.length) { list.innerHTML = '<p class="text-muted text-sm">No approved LEMs for this project</p>'; return; }
-  list.innerHTML = lems.map(lem => `
-    <div class="toggle-row">
-      <span class="toggle-label">${escHtml(lem.lemNumber || `LEM-${String(lem.id).padStart(4,'0')}`)} — ${lem.date}</span>
-      <input type="checkbox" value="${lem.id}" id="lem-check-${lem.id}" style="width:20px;height:20px;cursor:pointer">
-    </div>`).join('');
-};
-
-window.addInvLine = () => {
-  const container = $('inv-lines');
-  const row = el('div', 'card mt-8');
-  row.innerHTML = `
-    <div class="form-group"><label>Description</label><input type="text" class="inv-desc" placeholder="Line item description"></div>
-    <div class="grid-2">
-      <div class="form-group"><label>Qty</label><input type="number" class="inv-qty" value="1" min="0" step="0.5"></div>
-      <div class="form-group"><label>Rate ($)</label><input type="number" class="inv-rate" value="0" min="0" step="0.01"></div>
-    </div>
-    <button onclick="this.closest('.card').remove()" class="btn btn-danger btn-sm">Remove</button>
+    <button onclick="this.closest('.card').remove()" class="btn btn-danger btn-sm" style="margin-top:6px">Remove</button>
   `;
   container.appendChild(row);
 };
 
-window.saveInvoice = async () => {
-  const projectId = parseInt($('inv-project').value);
-  if (!projectId) { toast('Select a project', 'error'); return; }
-  const lemIds = Array.from(document.querySelectorAll('#inv-lem-list input[type=checkbox]:checked')).map(cb => parseInt(cb.value));
-  const lines = [];
-  document.querySelectorAll('#inv-lines .card').forEach(card => {
-    const desc = card.querySelector('.inv-desc').value;
-    const qty  = parseFloat(card.querySelector('.inv-qty').value) || 1;
-    const rate = parseFloat(card.querySelector('.inv-rate').value) || 0;
-    if (desc) lines.push({ description: desc, quantity: qty, rate, amount: qty * rate });
-  });
-  const total = lines.reduce((s, l) => s + l.amount, 0);
-  const invId = await window.DR_DB.invoices.add({
-    projectId, lemIds, status: 'draft', total,
-    dueDate: $('inv-terms').value,
-    createdBy: currentUser.id, createdAt: new Date().toISOString()
-  });
-  for (const line of lines) await window.DR_DB.invoiceItems.add({ invoiceId: invId, lemId: null, ...line });
-  closeModal('invoice-modal');
-  toast('Invoice created', 'success');
-  renderInvoicing();
-};
-
-window.viewInvoice = async (invId) => {
-  const inv = await window.DR_DB.invoices.get(invId);
-  if (!inv) return;
-  const items = await window.DR_DB.invoiceItems.where('invoiceId').equals(invId).toArray();
-  const projects = await getProjects(false);
-  const proj = projects.find(p => p.id === inv.projectId);
-  const modal = $('inv-view-modal-sheet');
-  modal.innerHTML = `
-    <div class="modal-handle"></div>
-    <div class="modal-title">INV-${String(invId).padStart(4,'0')}</div>
-    <div class="text-sm text-muted">Project: <strong style="color:var(--text)">${escHtml(proj?.name || '—')}</strong></div>
-    <div class="text-sm text-muted">Client: ${escHtml(proj?.clientName || '—')}</div>
-    <div class="divider"></div>
-    ${items.map(i => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-      <span class="text-sm">${escHtml(i.description)}</span>
-      <span class="text-sm text-gold">$${Number(i.amount).toFixed(2)}</span>
-    </div>`).join('')}
-    <div style="display:flex;justify-content:space-between;padding:12px 0" class="mt-8">
-      <strong>Total (+ GST)</strong>
-      <strong class="text-gold">$${(inv.total * 1.05).toFixed(2)}</strong>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
-      <button class="btn btn-ghost" onclick="closeModal('inv-view-modal')">Close</button>
-      <button class="btn btn-primary" onclick="finalizeInvoice(${invId})">Generate & Email PDF</button>
-    </div>
+window.addFLHACrewRow = () => {
+  const container = $('sf-crew-rows');
+  if (!container) return;
+  const row = el('div', 'consumable-row mt-4');
+  row.innerHTML = `
+    <input type="text" class="crew-name" placeholder="Print name" style="flex:1.5">
+    <input type="text" class="crew-role" placeholder="Role / title" style="flex:1">
+    <button onclick="this.parentElement.remove()" style="background:var(--danger);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:1rem;padding:0 8px">×</button>
   `;
-  openModal('inv-view-modal');
+  container.appendChild(row);
 };
 
-window.finalizeInvoice = async (invId) => {
-  const inv = await window.DR_DB.invoices.get(invId);
-  const items = await window.DR_DB.invoiceItems.where('invoiceId').equals(invId).toArray();
-  const projects = await getProjects(false);
-  const proj = projects.find(p => p.id === inv.projectId);
-  const pdf = await generateInvoicePDF(inv, proj, items, []);
-  try { await uploadInvoicePDF(pdf, inv, proj?.name || 'Project'); } catch(e) {}
-  await window.DR_DB.invoices.update(invId, { status: 'sent', sentAt: new Date().toISOString() });
-  if (proj?.clientEmail) {
-    try {
-      const b64 = pdfToBase64(pdf);
-      await sendEmail({
-        to: proj.clientEmail,
-        subject: `Invoice INV-${String(invId).padStart(4,'0')} — ${proj.name}`,
-        body: `<p>Please find attached invoice INV-${String(invId).padStart(4,'0')} for <strong>${proj.name}</strong>.</p><p>Regards,<br>${currentUser.name}<br>Keltic Geomatics</p>`,
-        attachments: [{ name: `Invoice_INV-${String(invId).padStart(4,'0')}.pdf`, contentType: 'application/pdf', contentBytes: b64 }]
+window.printFLHA = async () => {
+  // Gather form data and call PDF generator
+  try {
+    const { generateFLHAPDF } = await import('./pdf.js');
+    const hazards = [];
+    document.querySelectorAll('.flha-haz:checked').forEach(cb => {
+      hazards.push({ category: cb.dataset.cat, item: cb.dataset.item });
+    });
+    const taskRows = [];
+    document.querySelectorAll('#sf-task-rows .card').forEach(row => {
+      taskRows.push({
+        task: row.querySelector('.ft-task')?.value || '',
+        hazard: row.querySelector('.ft-hazard')?.value || '',
+        priority: row.querySelector('.ft-priority')?.value || 'L',
+        control: row.querySelector('.ft-control')?.value || ''
       });
-    } catch(e) {}
-  }
-  closeModal('inv-view-modal');
-  toast('Invoice finalized and emailed', 'success');
-  renderInvoicing();
-};
-
-// ─── Utilities ────────────────────────────────────────────────────────────────
-function escHtml(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function timeSince(dateStr) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-// ─── SVG Icons ────────────────────────────────────────────────────────────────
-function svgHome()      { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`; }
-function svgClipboard() { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>`; }
-function svgShield()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`; }
-function svgReceipt()   { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 2v20l3-2 3 2 3-2 3 2 3-2V2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/></svg>`; }
-function svgCamera()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>`; }
-function svgCheck()     { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`; }
-function svgFolder()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>`; }
-function svgDoc()       { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`; }
-function svgPeople()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>`; }
-function svgGrid()      { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`; }
-function svgWrench()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>`; }
-function svgTruck()     { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`; }
-
-// ─── Init ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async () => {
-  const savedId = sessionStorage.getItem('dr_user_id');
-  if (savedId) {
-    const user = await window.DR_DB.users.get(parseInt(savedId));
-    if (user && user.active) { currentUser = user; showApp(); return; }
-  }
-  $('login-form').addEventListener('submit', handleLogin);
-  $('login-screen').style.display = 'flex';
-});
-
-// Expose for inline handlers
-window.navigate = navigate;
-window.openModal = openModal;
-window.closeModal = closeModal;
-window.currentUser = null;
+    });
+    const crewRows = [];
+    document.querySelectorAll('#sf-crew-rows .consumable-row').forEach(row => {
+      crewRows.push({ name: row.querySelector('.crew-name')?.value || '', role: row.querySelector('.crew-role')?.value || '' });
+    });
+    const formData = {
+      date: $('sf-date')?.value || new Date().toISOString().slice(0,10),
+      company: $('sf-

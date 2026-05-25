@@ -40,7 +40,7 @@
     </form>
     <p class="text-muted text-sm" style="text-align:center;margin-top:16px">Works offline — no internet required once installed</p>
   </div>
-  <p class="text-muted text-sm" style="margin-top:24px;text-align:center">v2.0 • Keltic Geomatics Field Services</p>
+  <p class="text-muted text-sm" style="margin-top:24px;text-align:center">v2.1 • Keltic Geomatics Field Services</p>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════
@@ -129,6 +129,11 @@
 
     <!-- EMPLOYEE PROFILE -->
     <div id="page-employee-profile" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
+    <!-- LEM DASHBOARD (Supervisor) -->
+    <div id="page-lem-dashboard" class="page" style="display:none">
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
@@ -266,15 +271,4 @@
   }
 
   // Notification permission
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
-
-  document.addEventListener('touchstart', () => {}, { passive: true });
-</script>
-
-<!-- Main app module -->
-<script type="module" src="js/app.js"></script>
-
-</body>
-</html>
+  if ('Notification' in window && Notification.permiss

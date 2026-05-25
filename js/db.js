@@ -41,6 +41,30 @@ db.version(2).stores({
   walkarounds:         '++id, vehicleId, userId, date, status, syncStatus'
 });
 
+// ─── v3: Adds per-LEM equipment & battery tracking, project number index ─────
+db.version(3).stores({
+  users:               '++id, username, role, email, active',
+  projects:            '++id, name, projectNumber, clientName, clientEmail, status, createdBy, createdAt',
+  workOrders:          '++id, projectId, userId, date, status, supervisorId, submittedAt, approvedAt, syncStatus',
+  lems:                '++id, lemNumber, projectId, userId, date, status, supervisorId, submittedAt, approvedAt, syncStatus',
+  payItems:            '++id, name, rate, unit, active',
+  consumables:         '++id, name, unit, active',
+  safetyForms:         '++id, userId, projectId, type, date, status, syncStatus',
+  receipts:            '++id, userId, projectId, amount, billable, date, status, syncStatus',
+  photos:              '++id, userId, projectId, filename, takenAt, syncStatus',
+  notifications:       '++id, toUserId, fromUserId, message, scheduledAt, sentAt, read, type',
+  invoices:            '++id, projectId, createdBy, status, total, createdAt, sentAt',
+  invoiceItems:        '++id, invoiceId, lemId, description, quantity, rate, amount',
+  settings:            'key',
+  syncQueue:           '++id, type, payload, createdAt, attempts',
+  equipment:           '++id, name, type, serialNumber, status, active, assignedTo',
+  equipmentAssignments:'++id, equipmentId, userId, lemId, assignedAt, returnedAt',
+  lemEquipment:        '++id, lemId, userId, equipmentType, serialNumber',
+  lemBatteries:        '++id, lemId, userId, batteryType, quantity',
+  vehicles:            '++id, name, plate, make, model, active',
+  walkarounds:         '++id, vehicleId, userId, date, status, syncStatus'
+});
+
 // ─── Seed on first run ────────────────────────────────────────────────────────
 db.on('ready', async () => {
   // Pay items
@@ -81,19 +105,19 @@ db.on('ready', async () => {
     ]);
   }
 
-  // Equipment — standard Keltic instrument set
+  // Equipment — Keltic Geomatics instrument fleet
   const eqCount = await db.equipment.count();
   if (eqCount === 0) {
     await db.equipment.bulkAdd([
-      { name: 'Total Station',          serialNumber: 'TS-001',     batteryStatus: 100, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false },
-      { name: 'RTK-GNSS',              serialNumber: 'RTK-001',    batteryStatus: 100, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false },
-      { name: 'EM Utility Locator',    serialNumber: 'EM-001',     batteryStatus: 100, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false },
-      { name: 'GPR Concrete Scanner',  serialNumber: 'GPR-C-001',  batteryStatus: 100, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false },
-      { name: 'GPR Utility Locator',   serialNumber: 'GPR-U-001',  batteryStatus: 100, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false },
-      { name: 'Photogrammetry Drone',  serialNumber: 'DRONE-P-001',batteryStatus: 100, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false },
-      { name: 'Lidar Drone',           serialNumber: 'DRONE-L-001',batteryStatus: 100, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false },
-      { name: 'Scanner Leica RTC360',  serialNumber: 'SCAN-001',   batteryStatus: 100, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false },
-      { name: 'Digital Level',         serialNumber: 'LEV-001',    batteryStatus: null, status: 'available', active: true, assignedTo: null, serviceNote: null, replacementRequired: false }
+      { name: 'Trimble R10',             type: 'Trimble R10',            serialNumber: '',        status: 'available', active: true, assignedTo: null },
+      { name: 'Trimble R12',             type: 'Trimble R12',            serialNumber: '',        status: 'available', active: true, assignedTo: null },
+      { name: 'Trimble SX10',            type: 'Trimble SX10',           serialNumber: '',        status: 'available', active: true, assignedTo: null },
+      { name: 'Trimble S7',              type: 'Trimble S7',             serialNumber: '',        status: 'available', active: true, assignedTo: null },
+      { name: 'Trimble VX',              type: 'Trimble VX',             serialNumber: '',        status: 'available', active: true, assignedTo: null },
+      { name: 'Utility Locator',         type: 'Utility Locator',        serialNumber: 'EM-001',  status: 'available', active: true, assignedTo: null },
+      { name: 'Mavic 3E Drone',          type: 'Mavic 3E Drone',         serialNumber: '',        status: 'available', active: true, assignedTo: null },
+      { name: 'Phantom 4 RTK Drone',     type: 'Phantom 4 RTK Drone',    serialNumber: '',        status: 'available', active: true, assignedTo: null },
+      { name: 'Digital Level',           type: 'Other',                  serialNumber: 'LEV-001', status: 'available', active: true, assignedTo: null }
     ]);
   }
 
@@ -134,44 +158,10 @@ export async function createProject(data) {
   return db.projects.add({ ...data, status: 'active', createdAt: new Date().toISOString() });
 }
 
-// ─── LEMs ─────────────────────────────────────────────────────────────────────
-export async function createLEM(data) {
-  return db.lems.add({ ...data, status: 'draft', syncStatus: 'pending', submittedAt: null });
-}
-
-export async function getLEMsByUser(userId) {
-  return db.lems.where('userId').equals(userId).reverse().sortBy('date');
-}
-
-export async function getPendingLEMs() {
-  return db.lems.where('status').equals('submitted').toArray();
-}
-
-// ─── Equipment ────────────────────────────────────────────────────────────────
-export async function getAllEquipment() {
-  return db.equipment.where('active').equals(1).toArray();
-}
-
-// ─── Notifications ────────────────────────────────────────────────────────────
-export async function getNotifications(userId) {
-  const now = new Date().toISOString();
-  return db.notifications
-    .where('toUserId').equals(userId)
-    .filter(n => n.scheduledAt <= now)
-    .reverse()
-    .sortBy('scheduledAt');
-}
-
-export async function markRead(id) {
-  return db.notifications.update(id, { read: true });
-}
-
-// ─── Settings ─────────────────────────────────────────────────────────────────
-export async function getSetting(key) {
-  const row = await db.settings.get(key);
-  return row ? row.value : null;
-}
-
-export async function setSetting(key, value) {
-  return db.settings.put({ key, value });
-}
+// ─── Project Number Generator ─────────────────────────────────────────────────
+export async function generateProjectNumber() {
+  const yy = String(new Date().getFullYear()).slice(2); // e.g. "26"
+  const counterKey = `projectCounter_${yy}`;
+  const current = await db.settings.get(counterKey);
+  const next = (current ? current.value : 0) + 1;
+  await db.settings.put({ key: count
