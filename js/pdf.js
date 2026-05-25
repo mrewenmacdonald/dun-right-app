@@ -14,9 +14,9 @@ const KELTIC = {
   rowWhite:   [255, 255, 255]
 };
 
-// Page constants (A4 in mm)
-const PAGE_W = 210;
-const PAGE_H = 297;
+// Page constants (US Letter in mm — 8.5×11")
+const PAGE_W = 215.9;
+const PAGE_H = 279.4;
 const MARGIN = 10;
 const COL_W  = PAGE_W - MARGIN * 2;
 
@@ -143,7 +143,7 @@ function checkNewPage(doc, y, neededHeight, lemNumber, date, projectName, client
 // ─── MAIN LEM PDF ─────────────────────────────────────────────────────────────
 export async function generateLEMPDF(lem, project, user, supervisor) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
 
   const projectName = project?.name || '—';
   const clientName  = project?.clientName || '—';
@@ -462,7 +462,7 @@ export async function generateLEMPDF(lem, project, user, supervisor) {
 // ─── INVOICE PDF (Keltic branded) ─────────────────────────────────────────────
 export async function generateInvoicePDF(invoice, project, items, lems) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
 
   const projectName = project?.name || '—';
   const clientName  = project?.clientName || '—';

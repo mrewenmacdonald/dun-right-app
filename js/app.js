@@ -62,6 +62,7 @@ function navigate(page) {
   if (page === 'walkaround')       renderWalkaround();
   if (page === 'employee-profile') renderEmployeeProfile();
   if (page === 'lem-dashboard')    renderLEMDashboard();
+  if (page === 'admin')            renderAdmin();
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
@@ -103,11 +104,12 @@ function buildNav() {
     { page: 'invoicing',     icon: svgDoc(),      label: 'Invoices' },
     { page: 'staff',         icon: svgPeople(),   label: 'Staff' },
     { page: 'equipment',     icon: svgWrench(),   label: 'Equipment' },
-    { page: 'walkaround',    icon: svgTruck(),    label: 'Walkaround' }
+    { page: 'walkaround',    icon: svgTruck(),    label: 'Walkaround' },
+    { page: 'admin',         icon: svgGear(),     label: 'Admin' }
   ];
 
   const bottomItems = currentUser.role === 'supervisor'
-    ? [fieldItems[0], fieldItems[1], supervisorExtra[0], supervisorExtra[1], { page: 'more', icon: svgGrid(), label: 'More' }]
+    ? [fieldItems[0], fieldItems[1], supervisorExtra[0], supervisorExtra[7], { page: 'more', icon: svgGrid(), label: 'More' }]
     : [...fieldItems.slice(0, 4), { page: 'more', icon: svgGrid(), label: 'More' }];
 
   bottomItems.forEach(item => {
@@ -224,6 +226,7 @@ async function renderHome() {
     <button class="btn btn-outline" onclick="navigate('safety')">🦺 Safety Form</button>
     <button class="btn btn-ghost" onclick="navigate('walkaround')">🚛 Vehicle Check</button>
     <button class="btn btn-ghost" onclick="navigate('receipts')">🧾 Receipt</button>
+    <button class="btn btn-ghost" onclick="openTimeOffRequest()">📅 Time Off</button>
   </div>`;
 
   if (currentUser.role === 'supervisor') {
@@ -1378,26 +1381,34 @@ window.viewEmployeeProfile = (userId) => {
 // ─── Approvals (Supervisor) ───────────────────────────────────────────────────
 async function renderApprovals() {
   const container = $('page-approvals').querySelector('.page-scroll');
-  const pending = await getPendingLEMs();
+  // Show both submitted (pending approval) and outstanding drafts
+  const allLems = await window.DR_DB.lems.toArray();
+  const submitted = allLems.filter(l => l.status === 'submitted');
+  const drafts    = allLems.filter(l => l.status === 'draft');
+  const projects  = await getProjects(false);
 
   let html = `<div class="section-header"><span class="section-title">Pending LEM Approvals</span></div>`;
 
-  if (!pending.length) {
+  if (!submitted.length && !drafts.length) {
     html += `<div class="empty-state">${svgCheck()}<p>All caught up! No pending LEMs.</p></div>`;
-  } else {
-    const projects = await getProjects(false);
-    for (const lem of pending) {
+  }
+
+  // ── Submitted LEMs (require action) ────────────────────────────────────
+  if (submitted.length) {
+    for (const lem of submitted) {
       const user = await getUser(lem.userId);
       const proj = projects.find(p => p.id === lem.projectId);
       const labour = lem.labourItems || [];
       const totalHrs = labour.reduce((s, l) => s + (l.total || 0), 0);
-
-      html += `<div class="card">
-        <div class="card-title">${escHtml(lem.lemNumber || `LEM-${String(lem.id).padStart(4,'0')}`)}</div>
+      html += `<div class="card" style="border-color:var(--gold)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div class="card-title">${escHtml(lem.lemNumber || 'LEM-' + String(lem.id).padStart(4,'0'))}</div>
+          <span style="background:var(--gold);color:#000;font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:10px">SUBMITTED</span>
+        </div>
         <div class="text-sm text-muted">Field Staff: <strong style="color:var(--text)">${escHtml(user?.name || '—')}</strong></div>
         <div class="text-sm text-muted">Project: <strong style="color:var(--text)">${escHtml(proj?.name || '—')}</strong></div>
         <div class="text-sm text-muted">Date: ${lem.date}</div>
-        <div class="text-sm text-muted mt-8">Labour: ${labour.length} person(s) • ${totalHrs.toFixed(1)} total hours</div>
+        <div class="text-sm text-muted mt-8">Labour: ${labour.length} person(s) • ${totalHrs.toFixed(1)} hrs</div>
         ${lem.instruments?.length ? `<div class="text-sm text-muted">Instruments: ${lem.instruments.map(i => i.name).join(', ')}</div>` : ''}
         <div class="divider"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -1407,8 +1418,39 @@ async function renderApprovals() {
       </div>`;
     }
   }
+
+  // ── Draft LEMs (field staff haven't submitted yet) ──────────────────────
+  if (drafts.length) {
+    html += `<div class="section-header mt-12"><span class="section-title">Outstanding Drafts</span><span class="text-sm text-muted" style="font-size:0.75rem">Not yet submitted</span></div>`;
+    for (const lem of drafts) {
+      const user = await getUser(lem.userId);
+      const proj = projects.find(p => p.id === lem.projectId);
+      html += `<div class="card" style="border-color:var(--border);opacity:0.85">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div class="card-title" style="color:var(--text-muted)">${escHtml(lem.lemNumber || 'LEM-' + String(lem.id).padStart(4,'0'))}</div>
+          <span style="background:var(--border);color:var(--text-muted);font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:10px">DRAFT</span>
+        </div>
+        <div class="text-sm text-muted">Field Staff: <strong style="color:var(--text)">${escHtml(user?.name || '—')}</strong></div>
+        <div class="text-sm text-muted">Project: <strong style="color:var(--text)">${escHtml(proj?.name || '—')}</strong></div>
+        <div class="text-sm text-muted">Date: ${lem.date}</div>
+        <div class="divider"></div>
+        <button class="btn btn-outline btn-sm btn-full" onclick="sendDraftReminder(${lem.id}, ${lem.userId})">📨 Remind to Submit</button>
+      </div>`;
+    }
+  }
+
   container.innerHTML = html;
 }
+
+window.sendDraftReminder = async (lemId, userId) => {
+  const lem = await window.DR_DB.lems.get(lemId);
+  await window.DR_DB.notifications.add({
+    toUserId: userId, fromUserId: currentUser.id,
+    message: `Reminder: Please submit LEM ${lem?.lemNumber || lemId} for approval`,
+    scheduledAt: new Date().toISOString(), read: false, type: 'reminder'
+  });
+  toast('Reminder sent', 'success');
+};
 
 window.approveLEM = async (lemId) => {
   const lem = await window.DR_DB.lems.get(lemId);
@@ -1553,7 +1595,6 @@ async function renderSafetyPage() {
   <div class="grid-2 mt-8">
     <button class="btn btn-primary" onclick="openSafetyForm('fitforwork')">✅ Fit for Work</button>
     <button class="btn btn-outline" onclick="openSafetyForm('flha')">📋 FLHA</button>
-    <button class="btn btn-ghost" onclick="openSafetyForm('jha')">🔍 JHA</button>
     <button class="btn btn-ghost" onclick="openSafetyForm('hazard')">⚠️ Hazard Report</button>
   </div>
   <div class="section-header mt-16"><span class="section-title">Recent Forms</span></div>`;
@@ -1671,7 +1712,7 @@ const FLHA_CATEGORIES = [
 
 window.openSafetyForm = (type) => {
   const modal = $('safety-modal-sheet');
-  const titles = { fitforwork: 'Fit for Work Assessment', flha: 'Field Level Hazard Assessment (FLHA)', jha: 'Job Hazard Analysis', hazard: 'Hazard Report' };
+  const titles = { fitforwork: 'Fit for Work Assessment', flha: 'Field Level Hazard Assessment (FLHA)', hazard: 'Hazard Report' };
 
   let formHtml = `<div class="modal-handle"></div>
     <div class="modal-title">${titles[type] || type.toUpperCase()}</div>
@@ -1731,12 +1772,6 @@ window.openSafetyForm = (type) => {
         `<div class="toggle-row"><span class="toggle-label" style="font-size:0.85rem">${item}</span><button class="toggle" onclick="toggleBtn(this,null)"></button></div>`
       ).join('')}
     </div>`;
-  }
-
-  if (type === 'jha') {
-    formHtml += `<div class="form-group"><label>Task Description</label><input type="text" id="sf-task" placeholder="Describe the work being performed"></div>
-      <div class="form-group"><label>Controls / Mitigations</label><textarea id="sf-controls" placeholder="How are hazards being controlled?"></textarea></div>
-      <div class="form-group"><label>Emergency Assembly Point</label><input type="text" id="sf-assembly"></div>`;
   }
 
   if (type === 'hazard') {
@@ -2334,6 +2369,324 @@ function timeSince(dateStr) {
 }
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
+// ─── Admin Dashboard (Supervisor only) ────────────────────────────────────────
+let adminTab = 'users';
+
+async function renderAdmin() {
+  if (currentUser.role !== 'supervisor') { navigate('home'); return; }
+  const container = $('page-admin').querySelector('.page-scroll') || $('page-admin');
+
+  const TAB_STYLE = (t) => `padding:8px 16px;border-radius:6px;font-size:0.82rem;font-weight:600;cursor:pointer;border:none;transition:all 0.2s;${adminTab===t?'background:var(--gold);color:#000':'background:var(--surface);color:var(--text-muted)'}`;
+
+  let html = `
+    <div class="section-header"><span class="section-title">⚙️ Admin Dashboard</span></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0 12px">
+      <button style="${TAB_STYLE('users')}"    onclick="setAdminTab('users')">👥 Users</button>
+      <button style="${TAB_STYLE('lems')}"     onclick="setAdminTab('lems')">📋 All LEMs</button>
+      <button style="${TAB_STYLE('projects')}" onclick="setAdminTab('projects')">📁 Projects</button>
+      <button style="${TAB_STYLE('equipment')}"onclick="setAdminTab('equipment')">🔧 Equipment</button>
+      <button style="${TAB_STYLE('timeoff')}"  onclick="setAdminTab('timeoff')">📅 Time Off</button>
+    </div>`;
+
+  if (adminTab === 'users') {
+    const users = await window.DR_DB.users.toArray();
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="text-sm text-muted">${users.length} staff members</div>
+      <button class="btn btn-sm btn-primary" onclick="openAddStaffModal()">+ Add Staff</button>
+    </div>`;
+    for (const u of users) {
+      html += `<div class="card" style="opacity:${u.active?1:0.5}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="card-title" style="margin-bottom:2px">${escHtml(u.name)}</div>
+            <div class="text-sm text-muted">${u.role === 'supervisor' ? '🟡 Supervisor' : '🔵 Field'} · ${escHtml(u.email||'')}</div>
+            <div class="text-sm text-muted">Rate: $${u.hourlyRate||0}/hr · Province: ${u.province||'BC'}</div>
+          </div>
+          <span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:10px;background:${u.active?'var(--success)':'var(--danger)'};color:#fff">${u.active?'Active':'Inactive'}</span>
+        </div>
+        <div class="divider"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+          <button class="btn btn-sm btn-outline" onclick="adminEditRate(${u.id},${u.hourlyRate||0})">Edit Rate</button>
+          <button class="btn btn-sm btn-outline" onclick="adminToggleRole(${u.id},'${u.role}')">Toggle Role</button>
+          <button class="btn btn-sm ${u.active?'btn-danger':'btn-success'}" onclick="adminToggleActive(${u.id},${u.active})">${u.active?'Deactivate':'Activate'}</button>
+        </div>
+      </div>`;
+    }
+  }
+
+  if (adminTab === 'lems') {
+    const lems = await window.DR_DB.lems.reverse().sortBy('date');
+    const projects = await getProjects(false);
+    const STATUS_COLOR = { draft:'var(--border)', submitted:'var(--gold)', approved:'var(--success)', rejected:'var(--danger)' };
+    html += `<div class="text-sm text-muted" style="margin-bottom:8px">${lems.length} total LEMs</div>`;
+    const byStatus = { draft:0, submitted:0, approved:0, rejected:0 };
+    lems.forEach(l => { if (byStatus[l.status] !== undefined) byStatus[l.status]++; });
+    html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px">
+      ${Object.entries(byStatus).map(([s,n])=>`<div class="card" style="text-align:center;padding:8px;border-color:${STATUS_COLOR[s]}">
+        <div style="font-size:1.3rem;font-weight:700">${n}</div>
+        <div style="font-size:0.7rem;text-transform:uppercase;color:var(--text-muted)">${s}</div>
+      </div>`).join('')}
+    </div>`;
+    for (const lem of lems.slice(0,50)) {
+      const u = await getUser(lem.userId);
+      const proj = projects.find(p => p.id === lem.projectId);
+      const labour = lem.labourItems || [];
+      const hrs = labour.reduce((s,l) => s+(l.total||0), 0);
+      html += `<div class="card" style="border-left:3px solid ${STATUS_COLOR[lem.status]||'var(--border)'}">
+        <div style="display:flex;justify-content:space-between">
+          <span class="card-title" style="font-size:0.9rem">${escHtml(lem.lemNumber||'LEM-'+String(lem.id).padStart(4,'0'))}</span>
+          <span style="font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:10px;background:${STATUS_COLOR[lem.status]||'var(--border)'};color:${lem.status==='submitted'?'#000':'#fff'}">${lem.status?.toUpperCase()}</span>
+        </div>
+        <div class="text-sm text-muted">${escHtml(u?.name||'—')} · ${escHtml(proj?.name||'—')} · ${lem.date}</div>
+        <div class="text-sm text-muted">${hrs.toFixed(1)} hrs · ${lem.instruments?.length||0} instruments</div>
+      </div>`;
+    }
+  }
+
+  if (adminTab === 'projects') {
+    const projects = await getProjects(false);
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="text-sm text-muted">${projects.length} projects</div>
+      <button class="btn btn-sm btn-primary" onclick="openNewProjectModal()">+ New Project</button>
+    </div>`;
+    for (const p of projects) {
+      html += `<div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="card-title">${escHtml(p.name)}</div>
+            <div class="text-sm text-muted">#${escHtml(p.projectNumber||'—')} · ${escHtml(p.clientName||'No client')}</div>
+            <div class="text-sm text-muted">${escHtml(p.clientEmail||'')}</div>
+          </div>
+          <span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:10px;background:${p.status==='active'?'var(--success)':'var(--border)'};color:${p.status==='active'?'#fff':'var(--text-muted)'}">${p.status?.toUpperCase()||'ACTIVE'}</span>
+        </div>
+        <div class="divider"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <button class="btn btn-sm btn-outline" onclick="adminEditProject(${p.id})">Edit</button>
+          <button class="btn btn-sm ${p.status==='active'?'btn-danger':'btn-success'}" onclick="adminToggleProject(${p.id},'${p.status}')">
+            ${p.status==='active'?'Close Project':'Reopen'}
+          </button>
+        </div>
+      </div>`;
+    }
+  }
+
+  if (adminTab === 'equipment') {
+    const equip = await window.DR_DB.equipment.toArray();
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="text-sm text-muted">${equip.length} instruments</div>
+      <button class="btn btn-sm btn-primary" onclick="adminAddEquipment()">+ Add</button>
+    </div>`;
+    const STATUS_COLOR = { available:'var(--success)', 'in-use':'var(--gold)', maintenance:'var(--danger)' };
+    for (const eq of equip) {
+      html += `<div class="card" style="opacity:${eq.active?1:0.5}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="card-title" style="font-size:0.9rem">${escHtml(eq.name)}</div>
+            <div class="text-sm text-muted">S/N: ${escHtml(eq.serialNumber||'—')} · Type: ${escHtml(eq.type||eq.name)}</div>
+          </div>
+          <span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:10px;background:${STATUS_COLOR[eq.status]||'var(--border)'};color:${eq.status==='available'?'#fff':eq.status==='in-use'?'#000':'#fff'}">${eq.status?.toUpperCase()||'—'}</span>
+        </div>
+        <div class="divider"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <button class="btn btn-sm btn-outline" onclick="adminEditEquipment(${eq.id})">Edit S/N</button>
+          <button class="btn btn-sm ${eq.active?'btn-danger':'btn-success'}" onclick="adminToggleEquipment(${eq.id},${eq.active})">${eq.active?'Retire':'Restore'}</button>
+        </div>
+      </div>`;
+    }
+  }
+
+  if (adminTab === 'timeoff') {
+    const requests = await window.DR_DB.notifications
+      .where('type').equals('timeoff_request').reverse().sortBy('scheduledAt');
+    html += `<div class="text-sm text-muted" style="margin-bottom:12px">${requests.length} time-off request(s)</div>`;
+    if (!requests.length) {
+      html += `<div class="empty-state">${svgCheck()}<p>No time-off requests.</p></div>`;
+    }
+    // Build simple monthly calendar for current month
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0);
+    const monthName = firstDay.toLocaleString('default',{month:'long',year:'numeric'});
+    const approvedDates = requests.filter(r => r.approved).map(r => r.requestDate);
+    html += `<div style="margin:12px 0;font-size:0.85rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em">${monthName}</div>`;
+    html += `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;font-size:0.7rem;font-weight:700;color:var(--text-muted);margin-bottom:4px">
+      <div>SUN</div><div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div>
+    </div>`;
+    html += `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">`;
+    const startPad = firstDay.getDay();
+    for (let i = 0; i < startPad; i++) html += `<div></div>`;
+    for (let d = 1; d <= lastDay.getDate(); d++) {
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const hasReq = requests.find(r => r.requestDate === dateStr);
+      const isToday = d === now.getDate();
+      html += `<div style="padding:4px 2px;border-radius:4px;font-size:0.8rem;text-align:center;
+        background:${hasReq ? (hasReq.approved ? 'var(--success)' : 'var(--gold)') : 'transparent'};
+        color:${hasReq ? '#fff' : isToday ? 'var(--gold)' : 'var(--text)'};
+        font-weight:${isToday ? '700' : '400'};
+        border:${isToday ? '1px solid var(--gold)' : '1px solid transparent'}">
+        ${d}${hasReq ? `<div style="font-size:0.55rem;line-height:1">${escHtml(hasReq.staffName||'')}</div>` : ''}
+      </div>`;
+    }
+    html += `</div>`;
+    // List of requests
+    if (requests.length) {
+      html += `<div class="section-header mt-12"><span class="section-title">Requests</span></div>`;
+      for (const r of requests) {
+        html += `<div class="card">
+          <div class="card-title" style="font-size:0.9rem">${escHtml(r.staffName||'Unknown')}</div>
+          <div class="text-sm text-muted">Dates: ${escHtml(r.requestDate||'—')}${r.endDate ? ' → ' + r.endDate : ''}</div>
+          <div class="text-sm text-muted">${escHtml(r.message||'')}</div>
+          ${!r.approved ? `<div class="divider"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <button class="btn btn-danger btn-sm" onclick="adminDenyTimeOff(${r.id})">Deny</button>
+            <button class="btn btn-success btn-sm" onclick="adminApproveTimeOff(${r.id})">Approve</button>
+          </div>` : `<div class="text-sm" style="color:var(--success);font-weight:600;margin-top:4px">✓ Approved</div>`}
+        </div>`;
+      }
+    }
+  }
+
+  container.innerHTML = html;
+}
+
+window.setAdminTab = (tab) => { adminTab = tab; renderAdmin(); };
+
+window.adminEditRate = async (userId, currentRate) => {
+  const newRate = prompt(`New hourly rate for this employee (current: $${currentRate}/hr):`, currentRate);
+  if (newRate === null) return;
+  const rate = parseFloat(newRate);
+  if (isNaN(rate) || rate < 0) { toast('Invalid rate', 'error'); return; }
+  await window.DR_DB.users.update(userId, { hourlyRate: rate });
+  toast('Rate updated', 'success');
+  renderAdmin();
+};
+
+window.adminToggleRole = async (userId, currentRole) => {
+  const newRole = currentRole === 'supervisor' ? 'field' : 'supervisor';
+  if (!confirm(`Change this user to ${newRole}?`)) return;
+  await window.DR_DB.users.update(userId, { role: newRole });
+  toast(`Role changed to ${newRole}`, 'success');
+  renderAdmin();
+};
+
+window.adminToggleActive = async (userId, currentActive) => {
+  if (!confirm(`${currentActive ? 'Deactivate' : 'Activate'} this user?`)) return;
+  await window.DR_DB.users.update(userId, { active: !currentActive });
+  toast(currentActive ? 'User deactivated' : 'User activated', 'success');
+  renderAdmin();
+};
+
+window.adminToggleProject = async (projectId, currentStatus) => {
+  const newStatus = currentStatus === 'active' ? 'closed' : 'active';
+  await window.DR_DB.projects.update(projectId, { status: newStatus });
+  toast(`Project ${newStatus}`, 'success');
+  renderAdmin();
+};
+
+window.adminEditProject = async (projectId) => {
+  const p = await window.DR_DB.projects.get(projectId);
+  if (!p) return;
+  const newName = prompt('Project name:', p.name);
+  if (!newName) return;
+  const newClient = prompt('Client name:', p.clientName||'');
+  const newEmail = prompt('Client email:', p.clientEmail||'');
+  await window.DR_DB.projects.update(projectId, {
+    name: newName.trim(),
+    clientName: newClient?.trim()||p.clientName,
+    clientEmail: newEmail?.trim()||p.clientEmail
+  });
+  toast('Project updated', 'success');
+  renderAdmin();
+};
+
+window.adminAddEquipment = async () => {
+  const name = prompt('Equipment name:');
+  if (!name) return;
+  const serial = prompt('Serial number (leave blank if unknown):', '');
+  await window.DR_DB.equipment.add({ name: name.trim(), type: name.trim(), serialNumber: serial?.trim()||'', status: 'available', active: true, assignedTo: null });
+  toast('Equipment added', 'success');
+  renderAdmin();
+};
+
+window.adminEditEquipment = async (eqId) => {
+  const eq = await window.DR_DB.equipment.get(eqId);
+  if (!eq) return;
+  const newSerial = prompt('Serial number:', eq.serialNumber||'');
+  if (newSerial === null) return;
+  await window.DR_DB.equipment.update(eqId, { serialNumber: newSerial.trim() });
+  toast('Serial number updated', 'success');
+  renderAdmin();
+};
+
+window.adminToggleEquipment = async (eqId, currentActive) => {
+  await window.DR_DB.equipment.update(eqId, { active: !currentActive });
+  toast(currentActive ? 'Equipment retired' : 'Equipment restored', 'success');
+  renderAdmin();
+};
+
+window.adminApproveTimeOff = async (notifId) => {
+  await window.DR_DB.notifications.update(notifId, { approved: true, read: true });
+  const req = await window.DR_DB.notifications.get(notifId);
+  if (req) {
+    await window.DR_DB.notifications.add({
+      toUserId: req.fromUserId, fromUserId: currentUser.id,
+      message: `Your time-off request for ${req.requestDate} has been approved`,
+      scheduledAt: new Date().toISOString(), read: false, type: 'timeoff_approved'
+    });
+  }
+  toast('Time off approved', 'success');
+  renderAdmin();
+};
+
+window.adminDenyTimeOff = async (notifId) => {
+  const req = await window.DR_DB.notifications.get(notifId);
+  if (req) {
+    await window.DR_DB.notifications.add({
+      toUserId: req.fromUserId, fromUserId: currentUser.id,
+      message: `Your time-off request for ${req.requestDate} was not approved`,
+      scheduledAt: new Date().toISOString(), read: false, type: 'timeoff_denied'
+    });
+  }
+  await window.DR_DB.notifications.delete(notifId);
+  toast('Request denied', 'success');
+  renderAdmin();
+};
+
+// Time-off request (for field staff — accessible from home page)
+window.openTimeOffRequest = () => {
+  const modal = $('wo-modal-sheet');
+  modal.innerHTML = `<div class="modal-handle"></div>
+    <div class="modal-title">📅 Request Time Off</div>
+    <div class="form-group"><label>Start Date</label><input type="date" id="to-start" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="form-group"><label>End Date (leave blank for single day)</label><input type="date" id="to-end"></div>
+    <div class="form-group"><label>Reason (optional)</label><textarea id="to-reason" placeholder="Reason for time off..." rows="2"></textarea></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('wo-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitTimeOffRequest()">Submit Request</button>
+    </div>`;
+  openModal('wo-modal');
+};
+
+window.submitTimeOffRequest = async () => {
+  const startDate = $('to-start')?.value;
+  const endDate   = $('to-end')?.value || startDate;
+  const reason    = $('to-reason')?.value || 'Time off requested';
+  if (!startDate) { toast('Please select a date', 'error'); return; }
+  const supervisors = await window.DR_DB.users.where('role').equals('supervisor').toArray();
+  for (const sup of supervisors) {
+    await window.DR_DB.notifications.add({
+      toUserId: sup.id, fromUserId: currentUser.id,
+      message: reason,
+      requestDate: startDate, endDate: endDate,
+      staffName: currentUser.name,
+      scheduledAt: new Date().toISOString(), read: false, type: 'timeoff_request'
+    });
+  }
+  closeModal('wo-modal');
+  toast('Time-off request sent to supervisors', 'success');
+};
+
+
 function svgHome()      { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`; }
 function svgClipboard() { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>`; }
 function svgShield()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`; }
@@ -2346,6 +2699,7 @@ function svgPeople()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="c
 function svgGrid()      { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`; }
 function svgWrench()    { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>`; }
 function svgTruck()     { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`; }
+function svgGear()      { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`; }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
