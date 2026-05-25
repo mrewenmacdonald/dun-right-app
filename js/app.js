@@ -192,12 +192,134 @@ function showMoreMenu() { openModal('more'); }
 
 // ─── Home ─────────────────────────────────────────────────────────────────────
 async function renderHome() {
-  const container = $('page-home');
+  if (currentUser.role === 'supervisor') {
+    await renderSupervisorHome();
+  } else {
+    await renderFieldHome();
+  }
+}
+
+// ─── Supervisor Home ───────────────────────────────────────────────────────────
+async function renderSupervisorHome() {
+  const container = $('page-home').querySelector('.page-scroll');
+  const allLems   = await window.DR_DB.lems.toArray();
+  const submitted = allLems.filter(l => l.status === 'submitted');
+  const drafts    = allLems.filter(l => l.status === 'draft');
+  const approved  = allLems.filter(l => l.status === 'approved');
+  const projects  = await getProjects(true);
+  const allUsers  = await getAllUsers();
+  const fieldStaff = allUsers.filter(u => u.role === 'field');
+  const notifs    = await getNotifications(currentUser.id);
+  const unread    = notifs.filter(n => !n.read);
+
+  let html = `
+    <div class="section-header">
+      <span class="section-title">Good ${greeting()}, ${escHtml(currentUser.name.split(' ')[0])}</span>
+    </div>
+
+    <!-- KPI Strip -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+      <div class="card" style="text-align:center;padding:10px;border-color:var(--gold);cursor:pointer" onclick="navigate('approvals')">
+        <div style="font-size:1.6rem;font-weight:800;color:var(--gold)">${submitted.length}</div>
+        <div style="font-size:0.65rem;text-transform:uppercase;color:var(--text-muted)">Pending</div>
+      </div>
+      <div class="card" style="text-align:center;padding:10px;cursor:pointer" onclick="navigate('approvals')">
+        <div style="font-size:1.6rem;font-weight:800;color:var(--text-muted)">${drafts.length}</div>
+        <div style="font-size:0.65rem;text-transform:uppercase;color:var(--text-muted)">Drafts</div>
+      </div>
+      <div class="card" style="text-align:center;padding:10px;cursor:pointer" onclick="navigate('projects')">
+        <div style="font-size:1.6rem;font-weight:800;color:var(--success)">${projects.length}</div>
+        <div style="font-size:0.65rem;text-transform:uppercase;color:var(--text-muted)">Projects</div>
+      </div>
+      <div class="card" style="text-align:center;padding:10px;cursor:pointer" onclick="navigate('approvals')">
+        <div style="font-size:1.6rem;font-weight:800">${approved.length}</div>
+        <div style="font-size:0.65rem;text-transform:uppercase;color:var(--text-muted)">Approved</div>
+      </div>
+    </div>`;
+
+  // Unread notifications
+  if (unread.length) {
+    html += `<div class="card" style="border-color:var(--warning);margin-bottom:8px">
+      <div class="card-title">🔔 ${unread.length} unread notification${unread.length>1?'s':''}</div>`;
+    unread.slice(0,2).forEach(n => {
+      html += `<div class="list-item" onclick="markNotifRead(${n.id})">
+        <div class="list-item-left">
+          <div class="list-item-title" style="font-size:0.82rem">${escHtml(n.message)}</div>
+          <div class="list-item-sub">${timeSince(n.scheduledAt)}</div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Submitted LEMs needing action
+  if (submitted.length) {
+    html += `<div class="section-header mt-8"><span class="section-title">⏳ Needs Approval</span>
+      <button class="btn btn-sm btn-gold" onclick="navigate('approvals')" style="background:var(--gold);color:#000;border:none;border-radius:6px;padding:4px 12px;font-size:0.75rem;font-weight:700;cursor:pointer">View All</button>
+    </div>`;
+    for (const lem of submitted.slice(0, 3)) {
+      const user = await getUser(lem.userId);
+      const proj = projects.find(p => p.id === lem.projectId) || (await getProjects(false)).find(p => p.id === lem.projectId);
+      const hrs = (lem.labourItems||[]).reduce((s,l)=>s+(l.total||0),0);
+      html += `<div class="card" style="border-color:var(--gold)">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="card-title" style="font-size:0.9rem">${escHtml(lem.lemNumber||'LEM-'+String(lem.id).padStart(4,'0'))}</div>
+            <div class="text-sm text-muted">${escHtml(user?.name||'—')} · ${lem.date} · ${hrs.toFixed(1)}h</div>
+            <div class="text-sm text-muted">${escHtml(proj?.name||'No project')}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-danger btn-sm" onclick="rejectLEM(${lem.id})">✗</button>
+            <button class="btn btn-success btn-sm" onclick="approveLEM(${lem.id})">✓</button>
+          </div>
+        </div>
+      </div>`;
+    }
+    if (submitted.length > 3) {
+      html += `<button class="btn btn-outline btn-full mt-4" onclick="navigate('approvals')">+ ${submitted.length-3} more</button>`;
+    }
+  }
+
+  // Team overview
+  html += `<div class="section-header mt-12"><span class="section-title">👥 Team Status</span></div>`;
+  const today = new Date().toISOString().slice(0,10);
+  for (const staff of fieldStaff) {
+    const staffLems = allLems.filter(l => l.userId === staff.id).sort((a,b)=>b.date.localeCompare(a.date));
+    const latestLem = staffLems[0];
+    const todayLem  = staffLems.find(l => l.date === today);
+    const statusDot = todayLem ? (todayLem.status==='submitted'?'🟡':todayLem.status==='approved'?'🟢':'🔵') : '⚪';
+    html += `<div class="card" style="padding:10px 12px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:600;font-size:0.88rem">${statusDot} ${escHtml(staff.name)}</div>
+          <div class="text-sm text-muted">${todayLem ? 'LEM today: ' + (todayLem.status) : latestLem ? 'Last: ' + latestLem.date : 'No LEMs yet'}</div>
+        </div>
+        <div class="text-sm text-muted">${staffLems.length} total</div>
+      </div>
+    </div>`;
+  }
+
+  // Supervisor quick actions
+  html += `<div class="section-header mt-12"><span class="section-title">Quick Actions</span></div>
+    <div class="grid-2">
+      <button class="btn btn-primary" onclick="navigate('approvals')">✅ Approvals</button>
+      <button class="btn btn-outline" onclick="navigate('projects')">📁 Projects</button>
+      <button class="btn btn-ghost" onclick="navigate('invoicing')">🧾 Invoicing</button>
+      <button class="btn btn-ghost" onclick="navigate('admin')">⚙️ Admin</button>
+      <button class="btn btn-ghost" onclick="navigate('lem-dashboard')">📊 LEM Board</button>
+      <button class="btn btn-ghost" onclick="navigate('walkaround')">🚛 Walkaround</button>
+    </div>`;
+
+  container.innerHTML = html;
+}
+
+// ─── Field Staff Home ──────────────────────────────────────────────────────────
+async function renderFieldHome() {
+  const container = $('page-home').querySelector('.page-scroll');
   const notifs = await getNotifications(currentUser.id);
   const unread  = notifs.filter(n => !n.read);
-  const pending = currentUser.role === 'supervisor' ? await getPendingLEMs() : [];
 
-  let html = `<div class="section-header"><span class="section-title">Good ${greeting()}, ${currentUser.name.split(' ')[0]}</span></div>`;
+  let html = `<div class="section-header"><span class="section-title">Good ${greeting()}, ${escHtml(currentUser.name.split(' ')[0])}</span></div>`;
 
   if (unread.length) {
     html += `<div class="card" style="border-color:var(--warning)">
@@ -213,13 +335,6 @@ async function renderHome() {
     html += '</div>';
   }
 
-  if (currentUser.role === 'supervisor' && pending.length) {
-    html += `<div class="card" style="border-color:var(--gold)">
-      <div class="card-title">⏳ LEMs Awaiting Approval (${pending.length})</div>
-      <button class="btn btn-outline btn-full mt-8" onclick="navigate('approvals')">Review Now</button>
-    </div>`;
-  }
-
   html += `<div class="section-header mt-12"><span class="section-title">Quick Actions</span></div>
   <div class="grid-2">
     <button class="btn btn-primary" onclick="navigate('lem')">📋 New LEM</button>
@@ -228,13 +343,6 @@ async function renderHome() {
     <button class="btn btn-ghost" onclick="navigate('receipts')">🧾 Receipt</button>
     <button class="btn btn-ghost" onclick="openTimeOffRequest()">📅 Time Off</button>
   </div>`;
-
-  if (currentUser.role === 'supervisor') {
-    html += `<div class="grid-2 mt-8">
-      <button class="btn btn-ghost" onclick="navigate('equipment')">🔧 Equipment</button>
-      <button class="btn btn-ghost" onclick="navigate('staff')">👥 Staff</button>
-    </div>`;
-  }
 
   const lems = await getLEMsByUser(currentUser.id);
   const today = new Date().toISOString().slice(0, 10);
@@ -246,7 +354,7 @@ async function renderHome() {
     </div>`;
   }
 
-  container.querySelector('.page-scroll').innerHTML = html;
+  container.innerHTML = html;
 }
 
 function greeting() {
@@ -743,11 +851,13 @@ window.submitLEM = async (status) => {
   const canvas = $('sigCanvas');
   const signature = canvas ? canvas.toDataURL('image/png') : null;
 
-  // Validate: require serial numbers for equipment with type selected
-  const missingSerial = instruments.filter(i => i.name && i.name !== 'Other' && !i.serialNumber);
-  if (missingSerial.length > 0) {
-    toast(`Serial number required for: ${missingSerial.map(i => i.name).join(', ')}`, 'error');
-    return;
+  // Validate serial numbers only when submitting (not for draft saves)
+  if (status === 'submitted') {
+    const missingSerial = instruments.filter(i => i.name && i.name !== 'Other' && !i.serialNumber);
+    if (missingSerial.length > 0) {
+      toast(`Serial number required for: ${missingSerial.map(i => i.name).join(', ')}`, 'error');
+      return;
+    }
   }
 
   const lemData = {
@@ -1785,9 +1895,31 @@ window.openSafetyForm = (type) => {
       <div class="form-group"><label>Immediate Action Taken</label><textarea id="sf-action" placeholder="What did you do?"></textarea></div>`;
   }
 
-  formHtml += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:16px">
+  if (type === 'flha') {
+    formHtml += `
+    <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+      <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:8px">
+        📧 Email FLHA (optional)
+      </div>
+      <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px">
+        Always sent to: <strong style="color:var(--gold)">kelticfield@gmail.com</strong>
+      </div>
+      <div class="form-group" style="margin-bottom:6px">
+        <input type="email" id="flha-email-1" placeholder="Additional email 1" autocomplete="email">
+      </div>
+      <div class="form-group" style="margin-bottom:6px">
+        <input type="email" id="flha-email-2" placeholder="Additional email 2" autocomplete="email">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <input type="email" id="flha-email-3" placeholder="Additional email 3" autocomplete="email">
+      </div>
+    </div>`;
+  }
+
+  formHtml += `<div style="display:grid;grid-template-columns:${type==='flha'?'1fr 1fr 1fr 1fr':'1fr 1fr'};gap:8px;margin-top:16px">
     <button class="btn btn-ghost" onclick="closeModal('safety-modal')">Cancel</button>
-    ${type === 'flha' ? `<button class="btn btn-outline" onclick="printFLHA()">🖨️ Print / PDF</button>` : '<div></div>'}
+    ${type === 'flha' ? `<button class="btn btn-outline" onclick="printFLHA()">🖨️ PDF</button>
+    <button class="btn btn-outline" onclick="emailFLHA()" style="background:var(--surface);border-color:var(--gold);color:var(--gold)">📧 Email</button>` : '<div></div>'}
     <button class="btn btn-success" onclick="submitSafetyForm('${type}')">Submit</button>
   </div>`;
 
@@ -1871,6 +2003,75 @@ window.printFLHA = async () => {
   } catch(e) {
     console.error('FLHA PDF error:', e);
     toast('PDF generation failed: ' + e.message, 'error');
+  }
+};
+
+
+window.emailFLHA = async () => {
+  try {
+    const { generateFLHAPDF } = await import('./pdf.js');
+    // Collect form data (same as printFLHA)
+    const hazards = [];
+    document.querySelectorAll('.flha-haz:checked').forEach(cb => {
+      hazards.push({ category: cb.dataset.cat, item: cb.dataset.item });
+    });
+    const taskRows = [];
+    document.querySelectorAll('#sf-task-rows .card').forEach(row => {
+      taskRows.push({
+        task: row.querySelector('.ft-task')?.value || '',
+        hazard: row.querySelector('.ft-hazard')?.value || '',
+        priority: row.querySelector('.ft-priority')?.value || 'L',
+        control: row.querySelector('.ft-control')?.value || ''
+      });
+    });
+    const crewRows = [];
+    document.querySelectorAll('#sf-crew-rows .consumable-row').forEach(row => {
+      crewRows.push({ name: row.querySelector('.crew-name')?.value || '', role: row.querySelector('.crew-role')?.value || '' });
+    });
+    const formData = {
+      date: $('sf-date')?.value || new Date().toISOString().slice(0,10),
+      company: $('sf-company')?.value || 'Keltic Geomatics',
+      task: $('sf-task')?.value || '',
+      location: $('sf-location')?.value || '',
+      muster: $('sf-muster')?.value || '',
+      ppe: $('sf-ppe')?.value || 'yes',
+      controls: $('sf-controls')?.value || '',
+      hazards, taskRows, crewRows,
+      preparedBy: currentUser.name
+    };
+
+    // Generate & download PDF
+    const pdf = await generateFLHAPDF(formData);
+    const filename = `FLHA_${formData.date}_${currentUser.name.replace(/\s+/g,'_')}.pdf`;
+    pdf.save(filename);
+
+    // Build recipient list — kelticfield@gmail.com always first
+    const AUTO_EMAIL = 'kelticfield@gmail.com';
+    const extras = [
+      ($('flha-email-1')?.value || '').trim(),
+      ($('flha-email-2')?.value || '').trim(),
+      ($('flha-email-3')?.value || '').trim()
+    ].filter(e => e && e.includes('@'));
+    const allTo = [AUTO_EMAIL, ...extras].join(',');
+
+    const subject = encodeURIComponent(`FLHA — ${formData.location || formData.task || 'Keltic Geomatics'} — ${formData.date}`);
+    const body = encodeURIComponent(
+      `Hi,\n\nPlease find the Field Level Hazard Assessment attached.\n\n` +
+      `Date: ${formData.date}\n` +
+      `Prepared by: ${formData.preparedBy}\n` +
+      `Location: ${formData.location || '—'}\n` +
+      `Work description: ${formData.task || '—'}\n\n` +
+      `The FLHA PDF (${filename}) has been downloaded — please attach it to this email before sending.\n\n` +
+      `Keltic Geomatics`
+    );
+
+    // Open mailto — PDF was already downloaded, user attaches and sends
+    window.location.href = `mailto:${allTo}?subject=${subject}&body=${body}`;
+
+    toast('📧 PDF downloaded — attach it to the email that opened', 'success');
+  } catch(e) {
+    console.error('FLHA email error:', e);
+    toast('Email prep failed: ' + e.message, 'error');
   }
 };
 
