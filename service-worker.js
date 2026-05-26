@@ -1,5 +1,5 @@
 // DÙN RIGHT Service Worker — Offline-first PWA
-const CACHE_NAME = 'dun-right-v5';
+const CACHE_NAME = 'dun-right-v6';
 const ASSETS = [
   '/',
   '/index.html',

@@ -5,7 +5,8 @@ import { login, getAllUsers, getUser, getProjects, createProject, generateProjec
 import { generateLEMPDF, generateInvoicePDF } from './pdf.js';
 import { setAccessToken, uploadTimesheetPDF, uploadInvoicePDF,
          uploadReceiptPhoto, uploadSitePhoto, uploadSafetyForm,
-         sendEmail, pdfToBase64 } from './sync.js';
+         sendEmail, pdfToBase64,
+         handleMSAuthCallback, loadMSToken, initiateMSLogin, isMSConnected, disconnectMS } from './sync.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let currentUser = null;
@@ -1581,8 +1582,14 @@ window.approveLEM = async (lemId) => {
 
   const pdfDoc = await generateLEMPDF(lem, proj, user, currentUser);
 
-  // Download the approved PDF
+  // Download the approved PDF locally
   pdfDoc.save(`LEM_${lem.lemNumber}_${lem.date || 'approved'}.pdf`);
+
+  // Upload to OneDrive if Microsoft account is connected
+  try {
+    const odResult = await uploadTimesheetPDF(pdfDoc, lem, proj?.name || 'Project', user?.name || 'Staff');
+    if (odResult) toast('📁 Saved to OneDrive: 00 - DÙN RIGHT APP/02 - TIMESHEETS', 'success');
+  } catch(e) { console.warn('OneDrive upload skipped:', e.message); }
 
   // In-app notification to field staff
   await window.DR_DB.notifications.add({
@@ -2579,8 +2586,18 @@ async function renderAdmin() {
 
   const TAB_STYLE = (t) => `padding:8px 16px;border-radius:6px;font-size:0.82rem;font-weight:600;cursor:pointer;border:none;transition:all 0.2s;${adminTab===t?'background:var(--gold);color:#000':'background:var(--surface);color:var(--text-muted)'}`;
 
+  const msConnected = isMSConnected();
   let html = `
     <div class="section-header"><span class="section-title">⚙️ Admin Dashboard</span></div>
+    <div class="card" style="border-color:${msConnected ? 'var(--success)' : 'var(--warning)'};padding:10px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:0.82rem;font-weight:700">${msConnected ? '✅ Microsoft Connected' : '⚠️ Microsoft Not Connected'}</div>
+        <div class="text-sm text-muted">${msConnected ? 'LEMs auto-save to OneDrive' : 'Connect to enable OneDrive & email'}</div>
+      </div>
+      ${msConnected
+        ? `<button class="btn btn-sm btn-danger" onclick="disconnectMicrosoft()">Disconnect</button>`
+        : `<button class="btn btn-sm btn-primary" onclick="connectMicrosoft()">Connect</button>`}
+    </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0 12px">
       <button style="${TAB_STYLE('users')}"    onclick="setAdminTab('users')">👥 Users</button>
       <button style="${TAB_STYLE('lems')}"     onclick="setAdminTab('lems')">📋 All LEMs</button>
@@ -2922,6 +2939,13 @@ function svgGear()      { return `<svg viewBox="0 0 24 24" fill="none" stroke="c
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Handle Microsoft OAuth callback redirect
+  const msCallback = await handleMSAuthCallback();
+  if (msCallback) { console.log('Microsoft account connected'); }
+
+  // Restore stored MS token silently
+  await loadMSToken();
+
   const savedId = sessionStorage.getItem('dr_user_id');
   if (savedId) {
     const user = await window.DR_DB.users.get(parseInt(savedId));
@@ -2930,6 +2954,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('login-form').addEventListener('submit', handleLogin);
   $('login-screen').style.display = 'flex';
 });
+
+// Microsoft auth actions
+window.connectMicrosoft = () => initiateMSLogin();
+window.disconnectMicrosoft = () => { disconnectMS(); renderAdmin(); toast('Microsoft disconnected', 'success'); };
 
 // Expose for inline handlers
 window.navigate = navigate;
