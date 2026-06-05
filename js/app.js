@@ -1,8 +1,10 @@
 // DÙN RIGHT — Main application logic
 import { login, getAllUsers, getUser, getProjects, createProject, generateProjectNumber,
          createLEM, getLEMsByUser, getAllLEMs, getPendingLEMs, getAllEquipment,
-         getNotifications, markRead, getSetting, setSetting } from './db.js';
-import { generateLEMPDF, generateInvoicePDF } from './pdf.js';
+         getNotifications, markRead, getSetting, setSetting,
+         createPO, getPOsByUser, getAllPOs, getPOsByProject,
+         createMileageLog, getMileageByUser, getAllMileage, getMileageByProject } from './db.js';
+import { generateLEMPDF, generateInvoicePDF, generatePOPDF, generateSIMOPSPDF, generateEnvironmentalPDF } from './pdf.js';
 import { setAccessToken, uploadTimesheetPDF, uploadInvoicePDF,
          uploadReceiptPhoto, uploadSitePhoto, uploadSafetyForm,
          sendEmail, pdfToBase64,
@@ -64,6 +66,9 @@ function navigate(page) {
   if (page === 'employee-profile') renderEmployeeProfile();
   if (page === 'lem-dashboard')    renderLEMDashboard();
   if (page === 'admin')            renderAdmin();
+  if (page === 'pos')              renderPurchaseOrders();
+  if (page === 'mileage')          renderMileage();
+  if (page === 'payroll')          renderPayroll();
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
@@ -309,6 +314,9 @@ async function renderSupervisorHome() {
       <button class="btn btn-ghost" onclick="navigate('admin')">⚙️ Admin</button>
       <button class="btn btn-ghost" onclick="navigate('lem-dashboard')">📊 LEM Board</button>
       <button class="btn btn-ghost" onclick="openTimeOffRequest()">📅 Time Off</button>
+      <button class="btn btn-ghost" onclick="navigate('pos')">🛒 Purchase Orders</button>
+      <button class="btn btn-ghost" onclick="navigate('mileage')">🚗 Mileage</button>
+      <button class="btn btn-ghost" onclick="navigate('payroll')">💰 Payroll</button>
     </div>`;
 
   container.innerHTML = html;
@@ -343,6 +351,8 @@ async function renderFieldHome() {
     <button class="btn btn-ghost" onclick="navigate('walkaround')">🚛 Vehicle Check</button>
     <button class="btn btn-ghost" onclick="navigate('receipts')">🧾 Receipt</button>
     <button class="btn btn-ghost" onclick="openTimeOffRequest()">📅 Time Off</button>
+    <button class="btn btn-ghost" onclick="navigate('mileage')">🚗 Mileage</button>
+    <button class="btn btn-ghost" onclick="navigate('pos')">🛒 Purchase Orders</button>
   </div>`;
 
   const lems = await getLEMsByUser(currentUser.id);
@@ -2964,3 +2974,1260 @@ window.navigate = navigate;
 window.openModal = openModal;
 window.closeModal = closeModal;
 window.currentUser = null;
+
+// ─── Phase 2 Features ────────────────────────────────────────────────────────
+
+Object.defineProperty(window, 'currentUser', {
+  get: () => currentUser,
+  configurable: true
+});
+
+// ─── Additional SVG icons ─────────────────────────────────────────────────────
+function svgCart()  { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 001.98 1.61h9.72a2 2 0 001.98-1.61L23 6H6"/></svg>`; }
+function svgCar()   { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`; }
+function svgMoney() { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>`; }
+function svgPlus()  { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`; }
+function svgTrash() { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>`; }
+
+// ─── FEATURE 1: Purchase Orders ───────────────────────────────────────────────
+async function renderPurchaseOrders() {
+  const container = $('page-pos').querySelector('.page-scroll');
+  const pos = currentUser.role === 'supervisor' ? await getAllPOs() : await getPOsByUser(currentUser.id);
+  const projects = await getProjects(false);
+
+  let html = `<div class="section-header">
+    <span class="section-title">Purchase Orders</span>
+    <button class="btn btn-primary btn-sm" onclick="openNewPOModal()">+ New PO</button>
+  </div>`;
+
+  if (!pos.length) {
+    html += `<div class="empty-state">${svgCart()}<p>No purchase orders yet</p></div>`;
+  } else {
+    for (const po of pos) {
+      const proj = projects.find(p => p.id === po.projectId);
+      let staffName = '';
+      if (currentUser.role === 'supervisor') {
+        const u = await getUser(po.userId);
+        staffName = u ? ` • ${escHtml(u.name)}` : '';
+      }
+      const statusColors = { pending: 'warning', approved: 'success', rejected: 'danger' };
+      html += `<div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="card-title">PO-${String(po.id).padStart(4,'0')}</div>
+            <div class="text-sm text-muted">${escHtml(proj?.name || '—')}${staffName}</div>
+            <div class="text-sm text-muted mt-4">Vendor: <strong style="color:var(--text)">${escHtml(po.vendorName)}</strong></div>
+            <div class="text-sm text-muted">${escHtml(po.description || '')}</div>
+            <div class="text-sm mt-4"><strong class="text-gold">$${Number(po.estimatedCost || 0).toFixed(2)}</strong> • ${po.date}</div>
+          </div>
+          <span class="status status-${statusColors[po.status] || 'pending'}">${po.status}</span>
+        </div>
+        ${currentUser.role === 'supervisor' && po.status === 'pending' ? `
+        <div class="divider"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <button class="btn btn-danger btn-sm" onclick="rejectPO(${po.id})">Reject</button>
+          <button class="btn btn-success btn-sm" onclick="approvePO(${po.id})">Approve</button>
+        </div>` : ''}
+      </div>`;
+    }
+  }
+
+  container.innerHTML = html;
+}
+
+window.openNewPOModal = async () => {
+  const projects = await getProjects();
+  const modal = $('po-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">New Purchase Order</div>
+    <div class="form-group">
+      <label>Date</label>
+      <input type="date" id="po-date" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+    <div class="form-group">
+      <label>Project</label>
+      <select id="po-project">
+        <option value="">Select project...</option>
+        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Vendor Name</label>
+      <input type="text" id="po-vendor" placeholder="Supplier / vendor name">
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="po-desc" placeholder="What are you purchasing?"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Estimated Cost ($)</label>
+      <input type="number" id="po-cost" min="0" step="0.01" placeholder="0.00">
+    </div>
+    <div class="form-group">
+      <label>Notes</label>
+      <textarea id="po-notes" placeholder="Additional notes (optional)"></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('po-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitPO()">Submit PO</button>
+    </div>
+  `;
+  openModal('po-modal');
+};
+
+window.submitPO = async () => {
+  const projectId = parseInt($('po-project').value);
+  if (!projectId) { toast('Please select a project', 'error'); return; }
+  const vendorName = $('po-vendor').value.trim();
+  if (!vendorName) { toast('Please enter a vendor name', 'error'); return; }
+  const estimatedCost = parseFloat($('po-cost').value) || 0;
+
+  const po = {
+    projectId, userId: currentUser.id,
+    vendorName, description: $('po-desc').value,
+    estimatedCost, date: $('po-date').value,
+    notes: $('po-notes').value
+  };
+
+  const id = await createPO(po);
+
+  // Notify supervisors
+  const supervisors = await window.DR_DB.users.where('role').equals('supervisor').toArray();
+  for (const sup of supervisors) {
+    await window.DR_DB.notifications.add({
+      toUserId: sup.id, fromUserId: currentUser.id,
+      message: `${currentUser.name} submitted PO-${String(id).padStart(4,'0')} for $${estimatedCost.toFixed(2)} — ${vendorName}`,
+      scheduledAt: new Date().toISOString(), read: false, type: 'po_request'
+    });
+  }
+
+  closeModal('po-modal');
+  toast('Purchase order submitted', 'success');
+  renderPurchaseOrders();
+};
+
+window.approvePO = async (poId) => {
+  const po = await window.DR_DB.purchaseOrders.get(poId);
+  if (!po) return;
+  await window.DR_DB.purchaseOrders.update(poId, {
+    status: 'approved', approvedBy: currentUser.id, approvedAt: new Date().toISOString()
+  });
+  await window.DR_DB.notifications.add({
+    toUserId: po.userId, fromUserId: currentUser.id,
+    message: `Your PO-${String(poId).padStart(4,'0')} has been approved`,
+    scheduledAt: new Date().toISOString(), read: false, type: 'po_approved'
+  });
+  // Generate PO PDF
+  try {
+    const proj = (await getProjects(false)).find(p => p.id === po.projectId);
+    const poUser = await getUser(po.userId);
+    const fullPO = { ...po, status: 'approved', approvedAt: new Date().toISOString() };
+    const pdf = await generatePOPDF(fullPO, proj, poUser);
+    pdf.save(`PO-${String(poId).padStart(4,'0')}_${po.vendorName?.replace(/\s+/g,'_')}.pdf`);
+  } catch(e) { console.error('PO PDF error:', e); }
+  toast('PO approved', 'success');
+  renderPurchaseOrders();
+};
+
+window.rejectPO = async (poId) => {
+  const modal = $('po-reject-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">Reject PO-${String(poId).padStart(4,'0')}</div>
+    <div class="form-group">
+      <label>Reason for Rejection</label>
+      <textarea id="po-reject-reason" placeholder="Explain why this PO is being rejected..."></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('po-reject-modal')">Cancel</button>
+      <button class="btn btn-danger" onclick="confirmRejectPO(${poId})">Reject PO</button>
+    </div>
+  `;
+  openModal('po-reject-modal');
+};
+
+window.confirmRejectPO = async (poId) => {
+  const reason = $('po-reject-reason').value.trim();
+  const po = await window.DR_DB.purchaseOrders.get(poId);
+  if (!po) return;
+  await window.DR_DB.purchaseOrders.update(poId, {
+    status: 'rejected', rejectedBy: currentUser.id,
+    rejectedAt: new Date().toISOString(), rejectionReason: reason
+  });
+  await window.DR_DB.notifications.add({
+    toUserId: po.userId, fromUserId: currentUser.id,
+    message: `PO-${String(poId).padStart(4,'0')} was rejected. ${reason}`,
+    scheduledAt: new Date().toISOString(), read: false, type: 'po_rejected'
+  });
+  closeModal('po-reject-modal');
+  toast('PO rejected', 'error');
+  renderPurchaseOrders();
+};
+
+// ─── FEATURE 2: Mileage Log ───────────────────────────────────────────────────
+async function renderMileage() {
+  const container = $('page-mileage').querySelector('.page-scroll');
+  const logs = currentUser.role === 'supervisor' ? await getAllMileage() : await getMileageByUser(currentUser.id);
+  const projects = await getProjects(false);
+
+  let html = `<div class="section-header">
+    <span class="section-title">Mileage Log</span>
+    <button class="btn btn-primary btn-sm" onclick="openMileageModal()">+ Log Trip</button>
+  </div>`;
+
+  if (!logs.length) {
+    html += `<div class="empty-state">${svgCar()}<p>No mileage entries yet</p></div>`;
+  } else {
+    for (const log of logs) {
+      const proj = projects.find(p => p.id === log.projectId);
+      let staffName = '';
+      if (currentUser.role === 'supervisor') {
+        const u = await getUser(log.userId);
+        staffName = u ? `<div class="text-sm text-muted">${escHtml(u.name)}</div>` : '';
+      }
+      html += `<div class="card">
+        <div class="card-title">${log.date} — ${Number(log.totalKm || 0).toFixed(1)} km</div>
+        ${staffName}
+        <div class="text-sm text-muted">Project: ${escHtml(proj?.name || '—')}</div>
+        <div class="text-sm text-muted">Purpose: ${escHtml(log.purpose || '—')}</div>
+        <div class="text-sm text-muted mt-4">
+          ${escHtml(log.startLocation || '—')} → ${escHtml(log.endLocation || '—')}
+        </div>
+        ${log.startKm && log.endKm ? `<div class="text-sm text-muted">Odometer: ${log.startKm} → ${log.endKm} km</div>` : ''}
+        ${log.notes ? `<div class="text-sm text-muted mt-4">${escHtml(log.notes)}</div>` : ''}
+      </div>`;
+    }
+  }
+
+  container.innerHTML = html;
+}
+
+window.openMileageModal = async () => {
+  const projects = await getProjects();
+  const modal = $('mileage-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">Log Trip</div>
+    <div class="form-group">
+      <label>Date</label>
+      <input type="date" id="mil-date" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+    <div class="form-group">
+      <label>Project</label>
+      <select id="mil-project">
+        <option value="">Select project...</option>
+        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Purpose / Description</label>
+      <input type="text" id="mil-purpose" placeholder="e.g. Site visit — Highway 40">
+    </div>
+    <div class="form-group">
+      <label>Start Location</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="mil-start" placeholder="Start address or coords" style="flex:1">
+        <button class="btn btn-sm btn-ghost" onclick="gpsToField('mil-start')">📍 GPS</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>End Location</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="mil-end" placeholder="End address or coords" style="flex:1">
+        <button class="btn btn-sm btn-ghost" onclick="gpsToField('mil-end')">📍 GPS</button>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>Start KM (odometer)</label>
+        <input type="number" id="mil-start-km" min="0" step="1" placeholder="0" oninput="calcMileageTotal()">
+      </div>
+      <div class="form-group">
+        <label>End KM (odometer)</label>
+        <input type="number" id="mil-end-km" min="0" step="1" placeholder="0" oninput="calcMileageTotal()">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Total KM</label>
+      <input type="number" id="mil-total-km" min="0" step="0.1" placeholder="Auto-calculated or enter manually">
+    </div>
+    <div class="form-group">
+      <label>Notes</label>
+      <textarea id="mil-notes" placeholder="Optional notes..."></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('mileage-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMileageLog()">Save</button>
+    </div>
+  `;
+  openModal('mileage-modal');
+};
+
+window.calcMileageTotal = () => {
+  const s = parseFloat($('mil-start-km').value) || 0;
+  const e = parseFloat($('mil-end-km').value) || 0;
+  if (e > s) $('mil-total-km').value = (e - s).toFixed(1);
+};
+
+window.gpsToField = (fieldId) => {
+  if (!navigator.geolocation) { toast('GPS not available', 'error'); return; }
+  toast('Getting location...', 'info', 1500);
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const coords = `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`;
+      const field = $(fieldId);
+      if (field) field.value = coords;
+    },
+    () => toast('Could not get GPS location', 'error')
+  );
+};
+
+window.saveMileageLog = async () => {
+  const purpose = $('mil-purpose').value.trim();
+  if (!purpose) { toast('Please enter a purpose', 'error'); return; }
+
+  const startKm  = parseFloat($('mil-start-km').value) || null;
+  const endKm    = parseFloat($('mil-end-km').value) || null;
+  let   totalKm  = parseFloat($('mil-total-km').value) || null;
+  if (!totalKm && startKm !== null && endKm !== null && endKm > startKm) {
+    totalKm = endKm - startKm;
+  }
+  if (!totalKm) { toast('Please enter total km or odometer readings', 'error'); return; }
+
+  await createMileageLog({
+    userId: currentUser.id,
+    projectId: parseInt($('mil-project').value) || null,
+    date: $('mil-date').value,
+    purpose,
+    startLocation: $('mil-start').value,
+    endLocation:   $('mil-end').value,
+    startKm, endKm, totalKm,
+    notes: $('mil-notes').value
+  });
+
+  closeModal('mileage-modal');
+  toast('Mileage entry saved', 'success');
+  renderMileage();
+};
+
+// ─── FEATURE 3: SIMOPS Safety Form ───────────────────────────────────────────
+window.openSIMOPSForm = async () => {
+  const projects = await getProjects();
+  const modal = $('simops-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">SIMOPS Safety Form</div>
+    <div class="text-sm text-muted mb-8">Simultaneous Operations Assessment</div>
+
+    <div class="section-header mt-8"><span class="section-title">Header</span></div>
+    <div class="form-group"><label>Date</label><input type="date" id="sim-date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="form-group"><label>Location</label><input type="text" id="sim-location" placeholder="Site location"></div>
+    <div class="form-group"><label>Project</label>
+      <select id="sim-project">
+        <option value="">Select project...</option>
+        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group"><label>Work Description</label><textarea id="sim-work-desc" placeholder="Describe the scope of work"></textarea></div>
+    <div class="form-group"><label>Supervising Foreman</label><input type="text" id="sim-supervisor" value="${escHtml(currentUser.name)}"></div>
+
+    <div class="section-header mt-12"><span class="section-title">Section 1 — Operations Inventory</span></div>
+    <div class="text-sm text-muted mb-8">List all simultaneous operations on site</div>
+    <div id="sim-ops-rows"></div>
+    <button class="btn btn-outline btn-full mt-8" onclick="addSIMOPSRow()">+ Add Operation</button>
+
+    <div class="section-header mt-12"><span class="section-title">Section 2 — Hazard Identification</span></div>
+    <div class="card">
+      ${['Pressurized lines', 'Energized equipment', 'Crane / lifting ops', 'Excavation',
+         'Hot work', 'Confined space', 'Traffic', 'Other'].map((h, i) =>
+        `<div class="toggle-row"><span class="toggle-label">${h}</span><button class="toggle" id="sim-haz-${i}" onclick="toggleBtn(this,null)"></button></div>`
+      ).join('')}
+    </div>
+
+    <div class="section-header mt-12"><span class="section-title">Section 3 — Communication Protocol</span></div>
+    <div class="form-group"><label>Radio Channel</label><input type="text" id="sim-radio" placeholder="e.g. Channel 4"></div>
+    <div class="form-group"><label>Check-in Frequency</label>
+      <select id="sim-checkin">
+        <option value="15min">Every 15 minutes</option>
+        <option value="30min">Every 30 minutes</option>
+        <option value="1hr">Every 1 hour</option>
+      </select>
+    </div>
+    <div class="form-group"><label>Emergency Contact</label><input type="text" id="sim-emergency" placeholder="Name and phone number"></div>
+    <div class="form-group"><label>Muster Point</label><input type="text" id="sim-muster" placeholder="Emergency assembly location"></div>
+
+    <div class="section-header mt-12"><span class="section-title">Section 4 — Personnel Sign-off</span></div>
+    <div id="sim-signoff-rows"></div>
+    <button class="btn btn-outline btn-full mt-8" onclick="addSIMOPSSignoff()">+ Add Person</button>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('simops-modal')">Cancel</button>
+      <button class="btn btn-success" onclick="submitSIMOPS()">Submit Form</button>
+    </div>
+  `;
+
+  // Seed one op row and one signoff
+  addSIMOPSRow();
+  addSIMOPSSignoff();
+  openModal('simops-modal');
+};
+
+window.addSIMOPSRow = () => {
+  const container = $('sim-ops-rows');
+  const row = el('div', 'card mt-8');
+  row.innerHTML = `
+    <div class="grid-2">
+      <div class="form-group"><label>Operation</label><input type="text" class="sim-op-name" placeholder="e.g. Pipeline pressure test"></div>
+      <div class="form-group"><label>Company</label><input type="text" class="sim-op-company" placeholder="Company name"></div>
+    </div>
+    <div class="grid-2">
+      <div class="form-group"><label>Supervisor</label><input type="text" class="sim-op-sup" placeholder="Supervisor name"></div>
+      <div class="form-group"><label>Phone</label><input type="tel" class="sim-op-phone" placeholder="Phone number"></div>
+    </div>
+    <button onclick="this.closest('.card').remove()" class="btn btn-danger btn-sm">Remove</button>
+  `;
+  container.appendChild(row);
+};
+
+let simSigCtx = [];
+window.addSIMOPSSignoff = () => {
+  const container = $('sim-signoff-rows');
+  const idx = container.children.length;
+  const row = el('div', 'card mt-8');
+  row.innerHTML = `
+    <div class="form-group"><label>Name</label><input type="text" class="sim-person-name" placeholder="Full name"></div>
+    <div class="form-group"><label>Signature</label>
+      <div class="sig-canvas-wrap">
+        <canvas class="sim-sig-canvas" id="sim-sig-${idx}" width="500" height="120"></canvas>
+        <button class="sig-clear" onclick="clearSimSig(${idx})">Clear</button>
+      </div>
+    </div>
+  `;
+  container.appendChild(row);
+  setTimeout(() => setupGenericSigCanvas(`sim-sig-${idx}`), 50);
+};
+
+window.clearSimSig = (idx) => {
+  const canvas = $(`sim-sig-${idx}`);
+  if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+};
+
+function setupGenericSigCanvas(canvasId) {
+  const canvas = $(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  let drawing = false;
+
+  function pos(e) {
+    const r = canvas.getBoundingClientRect();
+    const scale = canvas.width / r.width;
+    const src = e.touches ? e.touches[0] : e;
+    return { x: (src.clientX - r.left) * scale, y: (src.clientY - r.top) * scale };
+  }
+
+  canvas.addEventListener('mousedown',  e => { drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); });
+  canvas.addEventListener('mousemove',  e => { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); });
+  canvas.addEventListener('mouseup',    () => drawing = false);
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); }, { passive: false });
+  canvas.addEventListener('touchmove',  e => { e.preventDefault(); if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); }, { passive: false });
+  canvas.addEventListener('touchend',   () => drawing = false);
+}
+
+window.submitSIMOPS = async () => {
+  const location = $('sim-location').value.trim();
+  if (!location) { toast('Please enter a location', 'error'); return; }
+
+  // Gather ops
+  const ops = [];
+  $('sim-ops-rows').querySelectorAll('.card').forEach(row => {
+    ops.push({
+      name:    row.querySelector('.sim-op-name').value,
+      company: row.querySelector('.sim-op-company').value,
+      supervisor: row.querySelector('.sim-op-sup').value,
+      phone:   row.querySelector('.sim-op-phone').value
+    });
+  });
+
+  // Gather hazards
+  const hazardLabels = ['Pressurized lines', 'Energized equipment', 'Crane / lifting ops', 'Excavation',
+                        'Hot work', 'Confined space', 'Traffic', 'Other'];
+  const hazards = hazardLabels.filter((_, i) => $(`sim-haz-${i}`)?.classList.contains('on'));
+
+  // Gather sign-offs
+  const signoffs = [];
+  $('sim-signoff-rows').querySelectorAll('.card').forEach((row, i) => {
+    const name = row.querySelector('.sim-person-name').value;
+    const canvas = row.querySelector('.sim-sig-canvas');
+    const sig = canvas ? canvas.toDataURL() : null;
+    signoffs.push({ name, signature: sig });
+  });
+
+  const form = {
+    userId: currentUser.id, type: 'simops',
+    date: $('sim-date').value,
+    projectId: parseInt($('sim-project').value) || null,
+    location, workDescription: $('sim-work-desc').value,
+    supervisor: $('sim-supervisor').value,
+    operations: ops, hazards,
+    radioChannel: $('sim-radio').value,
+    checkinFrequency: $('sim-checkin').value,
+    emergencyContact: $('sim-emergency').value,
+    musterPoint: $('sim-muster').value,
+    signoffs,
+    status: 'submitted', syncStatus: 'pending',
+    createdAt: new Date().toISOString()
+  };
+
+  await window.DR_DB.safetyForms.add(form);
+  try {
+    const proj = (await getProjects(false)).find(p => p.id === form.projectId);
+    const pdf = await generateSIMOPSPDF(form, proj);
+    pdf.save(`SIMOPS_${form.date}_${currentUser.name.replace(/\s+/g,'_')}.pdf`);
+  } catch(e) { console.error('SIMOPS PDF error:', e); }
+  closeModal('simops-modal');
+  toast('SIMOPS form submitted', 'success');
+  renderSafetyPage();
+};
+
+// ─── FEATURE 4: Environmental Safety Form ────────────────────────────────────
+window.openEnvironmentalForm = async () => {
+  const projects = await getProjects();
+  const modal = $('env-modal-sheet');
+
+  const envHazards = [
+    'Wetlands / water body nearby', 'Wildlife habitat', 'Contaminated soil',
+    'Spill risk', 'Erosion potential', 'Protected vegetation',
+    'Cultural / archaeological sites', 'Other'
+  ];
+
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">Environmental Safety Form</div>
+
+    <div class="section-header mt-8"><span class="section-title">Header</span></div>
+    <div class="form-group"><label>Date</label><input type="date" id="env-date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="form-group"><label>Location</label><input type="text" id="env-location" placeholder="Site location"></div>
+    <div class="form-group"><label>Project</label>
+      <select id="env-project">
+        <option value="">Select project...</option>
+        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group"><label>Weather Conditions</label><input type="text" id="env-weather" placeholder="e.g. Clear, 15°C, wind NW"></div>
+
+    <div class="section-header mt-12"><span class="section-title">Section 1 — Environmental Hazards</span></div>
+    <div class="card" id="env-hazard-checks">
+      ${envHazards.map((h, i) =>
+        `<div class="toggle-row"><span class="toggle-label">${h}</span><button class="toggle" id="env-haz-${i}" onclick="toggleBtn(this,null);updateEnvMitigations()"></button></div>`
+      ).join('')}
+    </div>
+
+    <div class="section-header mt-12"><span class="section-title">Section 2 — Mitigation Measures</span></div>
+    <div id="env-mitigations"><p class="text-muted text-sm">Select hazards above to add mitigations.</p></div>
+
+    <div class="section-header mt-12"><span class="section-title">Section 3 — Spill Kit Inventory</span></div>
+    <div class="card">
+      ${['Absorbent pads', 'Booms', 'Nitrile gloves', 'Waste bags', 'Eye wash station'].map((item, i) =>
+        `<div class="toggle-row"><span class="toggle-label">${item}</span><button class="toggle" id="env-spill-${i}" onclick="toggleBtn(this,null)"></button></div>`
+      ).join('')}
+    </div>
+
+    <div class="section-header mt-12"><span class="section-title">Section 4 — Waste Management</span></div>
+    <div id="env-waste-rows"></div>
+    <button class="btn btn-outline btn-full mt-8" onclick="addEnvWasteRow()">+ Add Waste Type</button>
+
+    <div class="section-header mt-12"><span class="section-title">Section 5 — Sign-off</span></div>
+    <div class="form-group"><label>Completed By</label><input type="text" id="env-signoff-name" value="${escHtml(currentUser.name)}"></div>
+    <div class="form-group"><label>Sign-off Date</label><input type="date" id="env-signoff-date" value="${new Date().toISOString().slice(0,10)}"></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('env-modal')">Cancel</button>
+      <button class="btn btn-success" onclick="submitEnvironmental()">Submit Form</button>
+    </div>
+  `;
+
+  addEnvWasteRow();
+  openModal('env-modal');
+};
+
+const ENV_HAZARDS = [
+  'Wetlands / water body nearby', 'Wildlife habitat', 'Contaminated soil',
+  'Spill risk', 'Erosion potential', 'Protected vegetation',
+  'Cultural / archaeological sites', 'Other'
+];
+
+window.updateEnvMitigations = () => {
+  const container = $('env-mitigations');
+  const active = ENV_HAZARDS.filter((_, i) => $(`env-haz-${i}`)?.classList.contains('on'));
+  if (!active.length) {
+    container.innerHTML = '<p class="text-muted text-sm">Select hazards above to add mitigations.</p>';
+    return;
+  }
+  container.innerHTML = active.map(h => `
+    <div class="form-group">
+      <label>${escHtml(h)}</label>
+      <textarea class="env-mitigation-field" data-hazard="${escHtml(h)}" placeholder="Mitigation measures for: ${escHtml(h)}"></textarea>
+    </div>`).join('');
+};
+
+window.addEnvWasteRow = () => {
+  const container = $('env-waste-rows');
+  const row = el('div', 'card mt-8');
+  row.innerHTML = `
+    <div class="grid-2">
+      <div class="form-group"><label>Waste Type</label><input type="text" class="env-waste-type" placeholder="e.g. Contaminated soil"></div>
+      <div class="form-group"><label>Disposal Method</label><input type="text" class="env-waste-disposal" placeholder="e.g. Licensed contractor"></div>
+    </div>
+    <button onclick="this.closest('.card').remove()" class="btn btn-danger btn-sm">Remove</button>
+  `;
+  container.appendChild(row);
+};
+
+window.submitEnvironmental = async () => {
+  const location = $('env-location').value.trim();
+  if (!location) { toast('Please enter a location', 'error'); return; }
+
+  const spillLabels = ['Absorbent pads', 'Booms', 'Nitrile gloves', 'Waste bags', 'Eye wash station'];
+  const spillKit = spillLabels.filter((_, i) => $(`env-spill-${i}`)?.classList.contains('on'));
+
+  const hazards = ENV_HAZARDS.filter((_, i) => $(`env-haz-${i}`)?.classList.contains('on'));
+
+  const mitigations = {};
+  document.querySelectorAll('.env-mitigation-field').forEach(f => {
+    mitigations[f.dataset.hazard] = f.value;
+  });
+
+  const waste = [];
+  $('env-waste-rows').querySelectorAll('.card').forEach(row => {
+    waste.push({
+      type:     row.querySelector('.env-waste-type').value,
+      disposal: row.querySelector('.env-waste-disposal').value
+    });
+  });
+
+  const form = {
+    userId: currentUser.id, type: 'environmental',
+    date: $('env-date').value,
+    projectId: parseInt($('env-project').value) || null,
+    location, weather: $('env-weather').value,
+    hazards, mitigations, spillKit, waste,
+    signoffName: $('env-signoff-name').value,
+    signoffDate: $('env-signoff-date').value,
+    status: 'submitted', syncStatus: 'pending',
+    createdAt: new Date().toISOString()
+  };
+
+  await window.DR_DB.safetyForms.add(form);
+  try {
+    const proj = (await getProjects(false)).find(p => p.id === form.projectId);
+    const pdf = await generateEnvironmentalPDF(form, proj);
+    pdf.save(`Environmental_${form.date}_${currentUser.name.replace(/\s+/g,'_')}.pdf`);
+  } catch(e) { console.error('Environmental PDF error:', e); }
+  closeModal('env-modal');
+  toast('Environmental form submitted', 'success');
+  renderSafetyPage();
+};
+
+// ─── FEATURE 5: Weekly Payroll Summary ────────────────────────────────────────
+async function renderPayroll() {
+  if (currentUser.role !== 'supervisor') { navigate('home'); return; }
+  const container = $('page-payroll').querySelector('.page-scroll');
+
+  // Determine current week (Mon–Sun)
+  const today = new Date();
+  const dayOfWeek = (today.getDay() + 6) % 7; // 0=Mon, 6=Sun
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() - dayOfWeek);
+  const weekEnd   = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+
+  const weekStartStr = weekStart.toISOString().slice(0,10);
+  const weekEndStr   = weekEnd.toISOString().slice(0,10);
+
+  let html = `<div class="section-header">
+    <span class="section-title">Payroll Summary</span>
+  </div>
+  <div class="card">
+    <div class="form-group">
+      <label>Week Starting (Monday)</label>
+      <input type="date" id="payroll-week-start" value="${weekStartStr}" onchange="refreshPayroll()">
+    </div>
+  </div>
+  <div id="payroll-content"></div>`;
+
+  container.innerHTML = html;
+  await refreshPayroll();
+}
+
+window.refreshPayroll = async () => {
+  const weekStartInput = $('payroll-week-start');
+  if (!weekStartInput) return;
+
+  const startDate = new Date(weekStartInput.value);
+  // Snap to Monday
+  const dayOfWeek = (startDate.getDay() + 6) % 7;
+  startDate.setDate(startDate.getDate() - dayOfWeek);
+  const endDate = new Date(startDate);
+  endDate.setDate(startDate.getDate() + 6);
+
+  const startStr = startDate.toISOString().slice(0,10);
+  const endStr   = endDate.toISOString().slice(0,10);
+
+  // Get all approved work orders in this week
+  const allWOs = await window.DR_DB.lems
+    .where('status').equals('approved')
+    .filter(w => w.date >= startStr && w.date <= endStr)
+    .toArray();
+
+  const users = await getAllUsers();
+  const payContent = $('payroll-content');
+  if (!payContent) return;
+
+  if (!allWOs.length) {
+    payContent.innerHTML = `<div class="card mt-8"><p class="text-muted text-sm">No approved work orders for the week of ${startStr} to ${endStr}.</p></div>`;
+    return;
+  }
+
+  // Classify labour rows by pay item type keywords
+  function classifyHours(labourItems) {
+    const cats = { survey: 0, draft: 0, office: 0, travel: 0, other: 0 };
+    (labourItems || []).forEach(item => {
+      const n = (item.name || '').toLowerCase();
+      if (n.includes('survey') || n.includes('locate') || n.includes('construction')) cats.survey += item.hours;
+      else if (n.includes('draft') || n.includes('cad')) cats.draft += item.hours;
+      else if (n.includes('office') || n.includes('coordinator') || n.includes('manager')) cats.office += item.hours;
+      else if (n.includes('travel')) cats.travel += item.hours;
+      else cats.other += item.hours;
+    });
+    return cats;
+  }
+
+  // Group by user
+  const byUser = {};
+  for (const wo of allWOs) {
+    if (!byUser[wo.userId]) byUser[wo.userId] = { wos: [], cats: { survey: 0, draft: 0, office: 0, travel: 0, other: 0 } };
+    byUser[wo.userId].wos.push(wo);
+    const cats = classifyHours(wo.labourItems);
+    Object.keys(cats).forEach(k => byUser[wo.userId].cats[k] += cats[k]);
+  }
+
+  let tableHtml = `
+  <div class="section-header mt-8"><span class="section-title">Week: ${startStr} — ${endStr}</span></div>
+  <div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+    <thead>
+      <tr style="background:var(--surface-2)">
+        <th style="text-align:left;padding:8px 6px">Employee</th>
+        <th style="padding:6px;text-align:center">Survey</th>
+        <th style="padding:6px;text-align:center">Draft</th>
+        <th style="padding:6px;text-align:center">Office</th>
+        <th style="padding:6px;text-align:center">Travel</th>
+        <th style="padding:6px;text-align:center">Other</th>
+        <th style="padding:6px;text-align:center;color:var(--gold)">Total</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  const totals = { survey: 0, draft: 0, office: 0, travel: 0, other: 0, grand: 0 };
+
+  for (const [userId, data] of Object.entries(byUser)) {
+    const u = users.find(u => u.id === parseInt(userId));
+    const c = data.cats;
+    const total = c.survey + c.draft + c.office + c.travel + c.other;
+    totals.survey += c.survey; totals.draft += c.draft; totals.office += c.office;
+    totals.travel += c.travel; totals.other += c.other; totals.grand += total;
+
+    tableHtml += `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 6px;font-weight:600">${escHtml(u?.name || 'Unknown')}</td>
+      <td style="padding:6px;text-align:center">${c.survey || '—'}</td>
+      <td style="padding:6px;text-align:center">${c.draft || '—'}</td>
+      <td style="padding:6px;text-align:center">${c.office || '—'}</td>
+      <td style="padding:6px;text-align:center">${c.travel || '—'}</td>
+      <td style="padding:6px;text-align:center">${c.other || '—'}</td>
+      <td style="padding:6px;text-align:center;color:var(--gold);font-weight:700">${total}</td>
+    </tr>`;
+  }
+
+  tableHtml += `<tr style="background:var(--surface-2);font-weight:700">
+    <td style="padding:8px 6px">TOTALS</td>
+    <td style="padding:6px;text-align:center">${totals.survey}</td>
+    <td style="padding:6px;text-align:center">${totals.draft}</td>
+    <td style="padding:6px;text-align:center">${totals.office}</td>
+    <td style="padding:6px;text-align:center">${totals.travel}</td>
+    <td style="padding:6px;text-align:center">${totals.other}</td>
+    <td style="padding:6px;text-align:center;color:var(--gold)">${totals.grand}</td>
+  </tr>
+    </tbody>
+  </table>
+  </div>
+  <button class="btn btn-outline btn-full mt-12" onclick="generatePayrollPDF('${startStr}','${endStr}')">📄 Export PDF</button>`;
+
+  payContent.innerHTML = tableHtml;
+};
+
+window.generatePayrollPDF = async (startStr, endStr) => {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+
+  // Header
+  doc.setFillColor(26, 26, 46);
+  doc.rect(0, 0, 210, 28, 'F');
+  doc.setFillColor(200, 169, 110);
+  doc.rect(0, 28, 210, 2, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.setTextColor(200, 169, 110);
+  doc.text('DÙN RIGHT', 14, 17);
+  doc.setFontSize(10);
+  doc.setTextColor(200, 200, 200);
+  doc.text('FIELD SERVICES', 14, 23);
+  doc.setFontSize(13);
+  doc.setTextColor(255, 255, 255);
+  doc.text('WEEKLY PAYROLL SUMMARY', 196, 17, { align: 'right' });
+  doc.setTextColor(0, 0, 0);
+
+  let y = 38;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(80, 80, 80);
+  doc.text(`Pay Period: ${startStr} to ${endStr}`, 14, y);
+  doc.text(`Generated: ${new Date().toISOString().slice(0,10)}  |  By: ${currentUser.name}`, 14, y + 6);
+  y += 16;
+
+  const allWOs = await window.DR_DB.lems
+    .where('status').equals('approved')
+    .filter(w => w.date >= startStr && w.date <= endStr)
+    .toArray();
+
+  const users = await getAllUsers();
+
+  function classifyHours(labourItems) {
+    const cats = { survey: 0, draft: 0, office: 0, travel: 0, other: 0 };
+    (labourItems || []).forEach(item => {
+      const n = (item.name || '').toLowerCase();
+      if (n.includes('survey') || n.includes('locate') || n.includes('construction')) cats.survey += item.hours;
+      else if (n.includes('draft') || n.includes('cad')) cats.draft += item.hours;
+      else if (n.includes('office') || n.includes('coordinator') || n.includes('manager')) cats.office += item.hours;
+      else if (n.includes('travel')) cats.travel += item.hours;
+      else cats.other += item.hours;
+    });
+    return cats;
+  }
+
+  const byUser = {};
+  for (const wo of allWOs) {
+    if (!byUser[wo.userId]) byUser[wo.userId] = { cats: { survey: 0, draft: 0, office: 0, travel: 0, other: 0 } };
+    const cats = classifyHours(wo.labourItems);
+    Object.keys(cats).forEach(k => byUser[wo.userId].cats[k] += cats[k]);
+  }
+
+  // Table header
+  doc.setFillColor(26, 26, 46);
+  doc.rect(12, y, 186, 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(255, 255, 255);
+  const cols = [16, 70, 95, 115, 135, 155, 175, 196];
+  const headers = ['Employee', 'Survey', 'Draft', 'Office', 'Travel', 'Other', 'Total'];
+  headers.forEach((h, i) => doc.text(h, i === 6 ? cols[i+1] : cols[i], y + 5.5, i === 6 ? { align: 'right' } : {}));
+  y += 8;
+
+  const totals = { survey: 0, draft: 0, office: 0, travel: 0, other: 0, grand: 0 };
+  doc.setFont('helvetica', 'normal');
+  let rowIdx = 0;
+
+  for (const [userId, data] of Object.entries(byUser)) {
+    const u = users.find(u => u.id === parseInt(userId));
+    const c = data.cats;
+    const total = c.survey + c.draft + c.office + c.travel + c.other;
+    totals.survey += c.survey; totals.draft += c.draft; totals.office += c.office;
+    totals.travel += c.travel; totals.other += c.other; totals.grand += total;
+
+    if (rowIdx % 2 === 0) { doc.setFillColor(250, 250, 250); doc.rect(12, y, 186, 7, 'F'); }
+    doc.setTextColor(40, 40, 40);
+    doc.text(u?.name || 'Unknown', 16, y + 5);
+    [c.survey, c.draft, c.office, c.travel, c.other].forEach((v, i) => {
+      doc.text(v ? String(v) : '—', cols[i+1], y + 5);
+    });
+    doc.setTextColor(200, 169, 110);
+    doc.text(String(total), cols[7], y + 5, { align: 'right' });
+    doc.setTextColor(40, 40, 40);
+    y += 7; rowIdx++;
+  }
+
+  // Totals row
+  doc.setFillColor(200, 169, 110);
+  doc.rect(12, y, 186, 7, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(26, 26, 46);
+  doc.text('TOTALS', 16, y + 5);
+  [totals.survey, totals.draft, totals.office, totals.travel, totals.other].forEach((v, i) => {
+    doc.text(String(v), cols[i+1], y + 5);
+  });
+  doc.text(String(totals.grand), cols[7], y + 5, { align: 'right' });
+
+  // Footer
+  doc.setFillColor(200, 169, 110);
+  doc.rect(0, 288, 210, 0.5, 'F');
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 100, 100);
+  doc.text('DÙN RIGHT — Confidential Payroll Document', 14, 294);
+  doc.text('Page 1 of 1', 196, 294, { align: 'right' });
+
+  doc.save(`Payroll_${startStr}_to_${endStr}.pdf`);
+  toast('Payroll PDF downloaded', 'success');
+};
+
+// ─── FEATURE 6: Client Portal ─────────────────────────────────────────────────
+async function renderClientHome() {
+  const container = $('page-home');
+
+  // Get the client's project
+  const projId = currentUser.projectId;
+  const projects = await getProjects(false);
+  const proj = projects.find(p => p.id === projId);
+
+  // Get approved work orders for this project
+  let wos = [];
+  if (projId) {
+    wos = await window.DR_DB.lems
+      .where('projectId').equals(projId)
+      .filter(w => w.status === 'approved')
+      .toArray();
+    wos.sort((a, b) => b.date.localeCompare(a.date));
+  }
+
+  // Get invoices for this project
+  let invoices = [];
+  if (projId) {
+    invoices = await window.DR_DB.invoices
+      .where('projectId').equals(projId)
+      .filter(inv => inv.status === 'sent' || inv.status === 'paid')
+      .toArray();
+    invoices.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }
+
+  let html = `<div class="section-header">
+    <span class="section-title">Welcome, ${escHtml(currentUser.name.split(' ')[0])}</span>
+  </div>`;
+
+  if (!proj) {
+    html += `<div class="card"><p class="text-muted text-sm">No project assigned to your account. Please contact your project manager.</p></div>`;
+    container.querySelector('.page-scroll').innerHTML = html;
+    return;
+  }
+
+  html += `<div class="card" style="border-color:var(--gold)">
+    <div class="card-title">${escHtml(proj.name)}</div>
+    <div class="text-sm text-muted">Client: ${escHtml(proj.clientName || currentUser.name)}</div>
+    <div class="text-sm text-muted">Status: <span class="status status-${proj.status}">${proj.status}</span></div>
+  </div>`;
+
+  // Work Orders / LEMs
+  html += `<div class="section-header mt-12"><span class="section-title">Approved Timesheets (${wos.length})</span></div>`;
+  if (!wos.length) {
+    html += `<div class="card"><p class="text-muted text-sm">No approved timesheets yet.</p></div>`;
+  } else {
+    for (const wo of wos) {
+      const u = await getUser(wo.userId);
+      const totalHrs = (wo.labourItems || []).reduce((s, i) => s + i.hours, 0);
+      html += `<div class="card">
+        <div class="card-title">WO-${String(wo.id).padStart(4,'0')} — ${wo.date}</div>
+        <div class="text-sm text-muted">Staff: ${escHtml(u?.name || '—')}</div>
+        <div class="text-sm text-muted">Labour: ${(wo.labourItems || []).map(l => `${l.name} × ${l.hours}h`).join(', ')}</div>
+        <div class="text-sm mt-4"><strong class="text-gold">${totalHrs} hrs total</strong></div>
+      </div>`;
+    }
+  }
+
+  // Invoices
+  html += `<div class="section-header mt-12"><span class="section-title">Invoices (${invoices.length})</span></div>`;
+  if (!invoices.length) {
+    html += `<div class="card"><p class="text-muted text-sm">No invoices yet.</p></div>`;
+  } else {
+    for (const inv of invoices) {
+      const signedBadge = inv.signatureDataUrl
+        ? `<div class="text-sm" style="color:var(--success)">✅ Signed ${inv.signedAt?.slice(0,10)}</div>`
+        : `<button class="btn btn-outline btn-sm mt-8" onclick="openSignaturePad(${inv.id})">✍️ Sign Invoice</button>`;
+      html += `<div class="card">
+        <div class="card-title">INV-${String(inv.id).padStart(4,'0')}</div>
+        <div class="text-sm text-muted">$${Number(inv.total || 0).toFixed(2)} + GST • ${inv.createdAt?.slice(0,10)}</div>
+        <div class="text-sm text-muted">Status: <span class="status status-${inv.status}">${inv.status}</span></div>
+        ${signedBadge}
+      </div>`;
+    }
+  }
+
+  container.querySelector('.page-scroll').innerHTML = html;
+}
+
+window.openAddClientModal = async () => {
+  const projects = await getProjects(false);
+  const modal = $('client-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">Add Client Portal User</div>
+    <div class="form-group"><label>Company Name</label><input type="text" id="client-company" placeholder="Client company name"></div>
+    <div class="form-group"><label>Contact Name</label><input type="text" id="client-name" placeholder="Contact full name"></div>
+    <div class="form-group"><label>Username</label><input type="text" id="client-username" placeholder="login username"></div>
+    <div class="form-group"><label>Password</label><input type="password" id="client-pass" placeholder="Temporary password"></div>
+    <div class="form-group"><label>Project Access</label>
+      <select id="client-project">
+        <option value="">Select project...</option>
+        ${projects.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+      <button class="btn btn-ghost" onclick="closeModal('client-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="addClient()">Create Client</button>
+    </div>
+  `;
+  openModal('client-modal');
+};
+
+window.addClient = async () => {
+  const name     = $('client-name').value.trim();
+  const username = $('client-username').value.trim().toLowerCase();
+  const company  = $('client-company').value.trim();
+  if (!name || !username) { toast('Name and username required', 'error'); return; }
+  const exists = await window.DR_DB.users.where('username').equals(username).first();
+  if (exists) { toast('Username already taken', 'error'); return; }
+  const projectId = parseInt($('client-project').value) || null;
+  await window.DR_DB.users.add({
+    name: name + (company ? ` (${company})` : ''),
+    username, password: $('client-pass').value,
+    email: '', role: 'client', active: true, projectId
+  });
+  closeModal('client-modal');
+  toast('Client portal user created', 'success');
+  renderStaff();
+};
+
+// ─── FEATURE 7: Photo Annotation ─────────────────────────────────────────────
+let annotationResolve = null;
+
+window.openPhotoAnnotation = (photoDataUrl) => {
+  return new Promise(resolve => {
+    annotationResolve = resolve;
+    const modal = $('photo-annotate-modal-sheet');
+    modal.innerHTML = `
+      <div style="background:var(--surface);padding:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--border)">
+        <button class="btn btn-sm btn-primary" id="ann-tool-draw" onclick="setAnnotateTool('draw')">✏️ Draw</button>
+        <button class="btn btn-sm btn-ghost" id="ann-tool-arrow" onclick="setAnnotateTool('arrow')">➡️ Arrow</button>
+        <button class="btn btn-sm btn-ghost" id="ann-tool-text" onclick="setAnnotateTool('text')">T Text</button>
+        <div style="display:flex;gap:4px">
+          ${['#e53935','#FFD600','#ffffff','#111111'].map(c =>
+            `<button onclick="setAnnotateColor('${c}')" style="width:24px;height:24px;border-radius:50%;background:${c};border:2px solid var(--border);cursor:pointer"></button>`
+          ).join('')}
+        </div>
+        <button class="btn btn-sm btn-ghost" onclick="annotateUndo()">↩ Undo</button>
+        <button class="btn btn-sm btn-success" onclick="annotationDone()" style="margin-left:auto">Done ✓</button>
+      </div>
+      <div style="flex:1;position:relative;overflow:hidden;background:#000">
+        <canvas id="ann-canvas" style="width:100%;height:100%;display:block;touch-action:none"></canvas>
+      </div>
+    `;
+    $('photo-annotate-modal-overlay').classList.add('open');
+    setTimeout(() => setupAnnotationCanvas(photoDataUrl), 50);
+  });
+};
+
+let annState = {
+  tool: 'draw', color: '#e53935', drawing: false,
+  history: [], img: null, ctx: null, canvas: null,
+  startX: 0, startY: 0, textMode: false
+};
+
+function setupAnnotationCanvas(dataUrl) {
+  const canvas = $('ann-canvas');
+  if (!canvas) return;
+  const parent = canvas.parentElement;
+  canvas.width  = parent.offsetWidth  || 800;
+  canvas.height = parent.offsetHeight || 600;
+  const ctx = canvas.getContext('2d');
+  annState.canvas = canvas;
+  annState.ctx = ctx;
+
+  const img = new Image();
+  img.onload = () => {
+    annState.img = img;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    annState.history = [ctx.getImageData(0, 0, canvas.width, canvas.height)];
+  };
+  img.src = dataUrl;
+
+  function getPos(e) {
+    const r = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / r.width;
+    const scaleY = canvas.height / r.height;
+    const src = e.touches ? e.touches[0] : e;
+    return {
+      x: (src.clientX - r.left) * scaleX,
+      y: (src.clientY - r.top) * scaleY
+    };
+  }
+
+  canvas.addEventListener('mousedown',  e => annStart(e, getPos(e)));
+  canvas.addEventListener('mousemove',  e => annMove(e, getPos(e)));
+  canvas.addEventListener('mouseup',    e => annEnd(e, getPos(e)));
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); annStart(e, getPos(e)); }, { passive: false });
+  canvas.addEventListener('touchmove',  e => { e.preventDefault(); annMove(e, getPos(e)); }, { passive: false });
+  canvas.addEventListener('touchend',   e => { e.preventDefault(); annEnd(e, getPos(e)); }, { passive: false });
+}
+
+function annStart(e, p) {
+  const { ctx, tool, color, history } = annState;
+  if (tool === 'text') {
+    const text = prompt('Enter annotation text:');
+    if (text) {
+      ctx.font = '20px sans-serif';
+      ctx.fillStyle = color;
+      ctx.fillText(text, p.x, p.y);
+      annState.history.push(ctx.getImageData(0, 0, annState.canvas.width, annState.canvas.height));
+    }
+    return;
+  }
+  annState.drawing = true;
+  annState.startX = p.x;
+  annState.startY = p.y;
+  if (tool === 'draw') {
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+  }
+}
+
+function annMove(e, p) {
+  if (!annState.drawing) return;
+  const { ctx, tool, color, history, startX, startY } = annState;
+  if (tool === 'draw') {
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  } else if (tool === 'arrow') {
+    // Redraw last snapshot + preview arrow
+    if (history.length) ctx.putImageData(history[history.length - 1], 0, 0);
+    drawArrow(ctx, startX, startY, p.x, p.y, color);
+  }
+}
+
+function annEnd(e, p) {
+  if (!annState.drawing) return;
+  annState.drawing = false;
+  const { ctx, tool, color, startX, startY } = annState;
+  if (tool === 'arrow') drawArrow(ctx, startX, startY, p.x, p.y, color);
+  annState.history.push(ctx.getImageData(0, 0, annState.canvas.width, annState.canvas.height));
+}
+
+function drawArrow(ctx, x1, y1, x2, y2, color) {
+  const headLen = 18;
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI/6), y2 - headLen * Math.sin(angle - Math.PI/6));
+  ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI/6), y2 - headLen * Math.sin(angle + Math.PI/6));
+  ctx.closePath();
+  ctx.fill();
+}
+
+window.setAnnotateTool = (tool) => {
+  annState.tool = tool;
+  ['draw','arrow','text'].forEach(t => {
+    const btn = $(`ann-tool-${t}`);
+    if (btn) btn.className = `btn btn-sm ${t === tool ? 'btn-primary' : 'btn-ghost'}`;
+  });
+};
+
+window.setAnnotateColor = (color) => {
+  annState.color = color;
+};
+
+window.annotateUndo = () => {
+  if (annState.history.length <= 1) return;
+  annState.history.pop();
+  annState.ctx.putImageData(annState.history[annState.history.length - 1], 0, 0);
+};
+
+window.annotationDone = () => {
+  const dataUrl = annState.canvas ? annState.canvas.toDataURL('image/png') : null;
+  $('photo-annotate-modal-overlay').classList.remove('open');
+  if (annotationResolve) { annotationResolve(dataUrl); annotationResolve = null; }
+};
+
+// Wire annotation into photo preview — update photo input handler
+function wrapPhotoInputWithAnnotation(inputEl, previewEl) {
+  inputEl.addEventListener('change', function() {
+    const previews = previewEl;
+    previews.innerHTML = '';
+    Array.from(this.files).forEach((file, idx) => {
+      const reader = new FileReader();
+      reader.onload = async e => {
+        const dataUrl = e.target.result;
+        const annotated = await window.openPhotoAnnotation(dataUrl);
+        const finalUrl = annotated || dataUrl;
+        previews.innerHTML += `<div style="position:relative">
+          <img src="${finalUrl}" data-annotated="${finalUrl}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px">
+        </div>`;
+      };
+      reader.readAsDataURL(file);
+    });
+  });
+}
+
+// ─── FEATURE 8: Client Signature on Invoices ─────────────────────────────────
+window.openSignaturePad = (invoiceId) => {
+  const modal = $('sig-pad-modal-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">Sign Invoice INV-${String(invoiceId).padStart(4,'0')}</div>
+    <p class="text-muted text-sm">Sign with your finger or mouse in the box below</p>
+    <div class="sig-canvas-wrap mt-8">
+      <canvas id="inv-sig-canvas" width="600" height="200"></canvas>
+      <button class="sig-clear" onclick="clearInvSig()">Clear</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('sig-pad-modal')">Cancel</button>
+      <button class="btn btn-success" onclick="saveInvoiceSignature(${invoiceId})">Save Signature</button>
+    </div>
+  `;
+  openModal('sig-pad-modal');
+  setTimeout(() => setupGenericSigCanvas('inv-sig-canvas'), 50);
+};
+
+window.clearInvSig = () => {
+  const canvas = $('inv-sig-canvas');
+  if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+};
+
+window.saveInvoiceSignature = async (invoiceId) => {
+  const canvas = $('inv-sig-canvas');
+  if (!canvas) return;
+  const sigDataUrl = canvas.toDataURL('image/png');
+
+  await window.DR_DB.invoices.update(invoiceId, {
+    signatureDataUrl: sigDataUrl,
+    signedAt: new Date().toISOString(),
+    signedBy: currentUser.name,
+    status: 'signed'
+  });
+
+  closeModal('sig-pad-modal');
+  closeModal('inv-view-modal');
+  toast('Signature saved', 'success');
+
+  if (currentUser.role === 'supervisor') renderInvoicing();
+  else if (currentUser.role === 'client') renderClientHome();
+};

@@ -2,7 +2,7 @@
 
 const db = new Dexie('DunRightDB');
 
-// ─── v1: Original schema (preserved for upgrade path) ────────────────────────
+// ─── v1 ───────────────────────────────────────────────────────────────────────
 db.version(1).stores({
   users:        '++id, username, role, email, active',
   projects:     '++id, name, clientName, clientEmail, status, createdBy, createdAt',
@@ -19,7 +19,7 @@ db.version(1).stores({
   syncQueue:    '++id, type, payload, createdAt, attempts'
 });
 
-// ─── v2: Adds LEMs, equipment, vehicles, walkarounds ─────────────────────────
+// ─── v2 ───────────────────────────────────────────────────────────────────────
 db.version(2).stores({
   users:               '++id, username, role, email, active',
   projects:            '++id, name, clientName, clientEmail, status, createdBy, createdAt',
@@ -41,7 +41,7 @@ db.version(2).stores({
   walkarounds:         '++id, vehicleId, userId, date, status, syncStatus'
 });
 
-// ─── v3: Adds per-LEM equipment & battery tracking, project number index ─────
+// ─── v3 ───────────────────────────────────────────────────────────────────────
 db.version(3).stores({
   users:               '++id, username, role, email, active',
   projects:            '++id, name, projectNumber, clientName, clientEmail, status, createdBy, createdAt',
@@ -65,9 +65,34 @@ db.version(3).stores({
   walkarounds:         '++id, vehicleId, userId, date, status, syncStatus'
 });
 
+// ─── v4: Phase 2 — POs, mileage, client accounts ─────────────────────────────
+db.version(4).stores({
+  users:               '++id, username, role, email, active, projectId',
+  projects:            '++id, name, projectNumber, clientName, clientEmail, status, createdBy, createdAt',
+  workOrders:          '++id, projectId, userId, date, status, supervisorId, submittedAt, approvedAt, syncStatus',
+  lems:                '++id, lemNumber, projectId, userId, date, status, supervisorId, submittedAt, approvedAt, syncStatus',
+  payItems:            '++id, name, rate, unit, active',
+  consumables:         '++id, name, unit, active',
+  safetyForms:         '++id, userId, projectId, type, date, status, syncStatus',
+  receipts:            '++id, userId, projectId, amount, billable, date, status, syncStatus',
+  photos:              '++id, userId, projectId, filename, takenAt, syncStatus',
+  notifications:       '++id, toUserId, fromUserId, message, scheduledAt, sentAt, read, type',
+  invoices:            '++id, projectId, createdBy, status, total, createdAt, sentAt',
+  invoiceItems:        '++id, invoiceId, lemId, description, quantity, rate, amount',
+  settings:            'key',
+  syncQueue:           '++id, type, payload, createdAt, attempts',
+  equipment:           '++id, name, type, serialNumber, status, active, assignedTo',
+  equipmentAssignments:'++id, equipmentId, userId, lemId, assignedAt, returnedAt',
+  lemEquipment:        '++id, lemId, userId, equipmentType, serialNumber',
+  lemBatteries:        '++id, lemId, userId, batteryType, quantity',
+  vehicles:            '++id, name, plate, make, model, active',
+  walkarounds:         '++id, vehicleId, userId, date, status, syncStatus',
+  purchaseOrders:      '++id, poNumber, projectId, userId, supervisorId, status, vendorName, date, createdAt',
+  mileageLogs:         '++id, userId, projectId, date, createdAt'
+});
+
 // ─── Seed on first run ────────────────────────────────────────────────────────
 db.on('ready', async () => {
-  // Pay items
   const piCount = await db.payItems.count();
   if (piCount === 0) {
     await db.payItems.bulkAdd([
@@ -82,7 +107,6 @@ db.on('ready', async () => {
     ]);
   }
 
-  // Consumables
   const ccCount = await db.consumables.count();
   if (ccCount === 0) {
     await db.consumables.bulkAdd([
@@ -95,7 +119,6 @@ db.on('ready', async () => {
     ]);
   }
 
-  // Users
   const ucCount = await db.users.count();
   if (ucCount === 0) {
     await db.users.bulkAdd([
@@ -105,111 +128,88 @@ db.on('ready', async () => {
     ]);
   }
 
-  // Equipment — Keltic Geomatics instrument fleet
   const eqCount = await db.equipment.count();
   if (eqCount === 0) {
     await db.equipment.bulkAdd([
-      { name: 'Trimble R10',             type: 'Trimble R10',            serialNumber: '',        status: 'available', active: true, assignedTo: null },
-      { name: 'Trimble R12',             type: 'Trimble R12',            serialNumber: '',        status: 'available', active: true, assignedTo: null },
-      { name: 'Trimble SX10',            type: 'Trimble SX10',           serialNumber: '',        status: 'available', active: true, assignedTo: null },
-      { name: 'Trimble S7',              type: 'Trimble S7',             serialNumber: '',        status: 'available', active: true, assignedTo: null },
-      { name: 'Trimble VX',              type: 'Trimble VX',             serialNumber: '',        status: 'available', active: true, assignedTo: null },
-      { name: 'Utility Locator',         type: 'Utility Locator',        serialNumber: 'EM-001',  status: 'available', active: true, assignedTo: null },
-      { name: 'Mavic 3E Drone',          type: 'Mavic 3E Drone',         serialNumber: '',        status: 'available', active: true, assignedTo: null },
-      { name: 'Phantom 4 RTK Drone',     type: 'Phantom 4 RTK Drone',    serialNumber: '',        status: 'available', active: true, assignedTo: null },
-      { name: 'Digital Level',           type: 'Other',                  serialNumber: 'LEV-001', status: 'available', active: true, assignedTo: null }
+      { name: 'Trimble R10',         type: 'Trimble R10',         serialNumber: '', status: 'available', active: true, assignedTo: null },
+      { name: 'Trimble R12',         type: 'Trimble R12',         serialNumber: '', status: 'available', active: true, assignedTo: null },
+      { name: 'Trimble SX10',        type: 'Trimble SX10',        serialNumber: '', status: 'available', active: true, assignedTo: null },
+      { name: 'Trimble S7',          type: 'Trimble S7',          serialNumber: '', status: 'available', active: true, assignedTo: null },
+      { name: 'Trimble VX',          type: 'Trimble VX',          serialNumber: '', status: 'available', active: true, assignedTo: null },
+      { name: 'Utility Locator',     type: 'Utility Locator',     serialNumber: 'EM-001', status: 'available', active: true, assignedTo: null },
+      { name: 'Mavic 3E Drone',      type: 'Mavic 3E Drone',      serialNumber: '', status: 'available', active: true, assignedTo: null },
+      { name: 'Phantom 4 RTK Drone', type: 'Phantom 4 RTK Drone', serialNumber: '', status: 'available', active: true, assignedTo: null },
+      { name: 'Digital Level',       type: 'Other',               serialNumber: 'LEV-001', status: 'available', active: true, assignedTo: null }
     ]);
   }
 
-  // Default vehicle
   const vCount = await db.vehicles.count();
   if (vCount === 0) {
-    await db.vehicles.bulkAdd([
-      { name: 'Truck 1', plate: '', make: '', model: '', year: '', active: true }
-    ]);
+    await db.vehicles.bulkAdd([{ name: 'Truck 1', plate: '', make: '', model: '', year: '', active: true }]);
   }
 });
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
 window.DR_DB = db;
 
+// ─── Auth ─────────────────────────────────────────────────────────────────────
 export async function login(username, password) {
   const user = await db.users.where('username').equals(username.toLowerCase()).first();
   if (!user || user.password !== password || !user.active) return null;
   return user;
 }
-
-export async function getUser(id) {
-  return db.users.get(id);
-}
-
-export async function getAllUsers() {
-  return db.users.where('active').equals(1).toArray();
-}
+export async function getUser(id)    { return db.users.get(id); }
+export async function getAllUsers()  { return db.users.where('active').equals(1).toArray(); }
 
 // ─── Projects ─────────────────────────────────────────────────────────────────
 export async function getProjects(activeOnly = true) {
-  return activeOnly
-    ? db.projects.where('status').equals('active').toArray()
-    : db.projects.toArray();
+  return activeOnly ? db.projects.where('status').equals('active').toArray() : db.projects.toArray();
 }
-
 export async function createProject(data) {
   return db.projects.add({ ...data, status: 'active', createdAt: new Date().toISOString() });
 }
-
-// ─── Project Number Generator ─────────────────────────────────────────────────
 export async function generateProjectNumber() {
-  const yy = String(new Date().getFullYear()).slice(2); // e.g. "26"
-  const counterKey = `projectCounter_${yy}`;
-  const current = await db.settings.get(counterKey);
+  const yy = String(new Date().getFullYear()).slice(2);
+  const key = `projectCounter_${yy}`;
+  const current = await db.settings.get(key);
   const next = (current ? current.value : 0) + 1;
-  await db.settings.put({ key: counterKey, value: next });
-  return `${yy}${String(next).padStart(4, '0')}`; // e.g. "260001"
+  await db.settings.put({ key, value: next });
+  return `${yy}${String(next).padStart(4, '0')}`;
 }
 
 // ─── LEMs ─────────────────────────────────────────────────────────────────────
 export async function createLEM(data) {
   return db.lems.add({ ...data, status: 'draft', syncStatus: 'pending', submittedAt: null });
 }
-
-export async function getLEMsByUser(userId) {
-  return db.lems.where('userId').equals(userId).reverse().sortBy('date');
-}
-
-export async function getAllLEMs() {
-  return db.lems.reverse().sortBy('date');
-}
-
-export async function getPendingLEMs() {
-  return db.lems.where('status').equals('submitted').toArray();
-}
+export async function getLEMsByUser(userId) { return db.lems.where('userId').equals(userId).reverse().sortBy('date'); }
+export async function getAllLEMs()          { return db.lems.reverse().sortBy('date'); }
+export async function getPendingLEMs()      { return db.lems.where('status').equals('submitted').toArray(); }
 
 // ─── Equipment ────────────────────────────────────────────────────────────────
-export async function getAllEquipment() {
-  return db.equipment.where('active').equals(1).toArray();
+export async function getAllEquipment() { return db.equipment.where('active').equals(1).toArray(); }
+
+// ─── Purchase Orders ──────────────────────────────────────────────────────────
+export async function createPO(data) {
+  return db.purchaseOrders.add({ ...data, status: 'pending', createdAt: new Date().toISOString() });
 }
+export async function getPOsByUser(userId)  { return db.purchaseOrders.where('userId').equals(userId).reverse().sortBy('date'); }
+export async function getAllPOs()            { return db.purchaseOrders.reverse().sortBy('date'); }
+export async function getPOsByProject(projId){ return db.purchaseOrders.where('projectId').equals(projId).reverse().sortBy('date'); }
+
+// ─── Mileage Logs ─────────────────────────────────────────────────────────────
+export async function createMileageLog(data) {
+  return db.mileageLogs.add({ ...data, createdAt: new Date().toISOString() });
+}
+export async function getMileageByUser(userId)   { return db.mileageLogs.where('userId').equals(userId).reverse().sortBy('date'); }
+export async function getAllMileage()             { return db.mileageLogs.reverse().sortBy('date'); }
+export async function getMileageByProject(projId){ return db.mileageLogs.where('projectId').equals(projId).toArray(); }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
 export async function getNotifications(userId) {
   const now = new Date().toISOString();
-  return db.notifications
-    .where('toUserId').equals(userId)
-    .filter(n => n.scheduledAt <= now)
-    .reverse()
-    .sortBy('scheduledAt');
+  return db.notifications.where('toUserId').equals(userId).filter(n => n.scheduledAt <= now).reverse().sortBy('scheduledAt');
 }
-
-export async function markRead(id) {
-  return db.notifications.update(id, { read: true });
-}
+export async function markRead(id) { return db.notifications.update(id, { read: true }); }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
-export async function getSetting(key) {
-  const row = await db.settings.get(key);
-  return row ? row.value : null;
-}
-
-export async function setSetting(key, value) {
-  return db.settings.put({ key, value });
-}
+export async function getSetting(key)        { const r = await db.settings.get(key); return r ? r.value : null; }
+export async function setSetting(key, value) { return db.settings.put({ key, value }); }

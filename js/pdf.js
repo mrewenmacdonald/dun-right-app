@@ -584,6 +584,27 @@ export async function generateInvoicePDF(invoice, project, items, lems) {
 
   kelticFooter(doc, 1, 1);
 
+  // ─── Client Signature ─────────────────────────────────────────────────────
+  if (invoice.signatureDataUrl) {
+    // ensure room on current page
+    if (y + 42 > PAGE_H - 20) { doc.addPage(); y = MARGIN; }
+    doc.setDrawColor(...KELTIC.green);
+    doc.line(MARGIN, y, PAGE_W - MARGIN, y);
+    y += 6;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...KELTIC.dark);
+    doc.text('CLIENT ACCEPTANCE', MARGIN, y);
+    y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80,80,80);
+    doc.text(`Signed by: ${invoice.signedBy || ''}  |  Date: ${(invoice.signedAt || '').slice(0,10)}`, MARGIN, y);
+    y += 4;
+    try {
+      doc.addImage(invoice.signatureDataUrl, 'PNG', MARGIN, y, 80, 22, undefined, 'FAST');
+    } catch(e) {}
+    y += 26;
+    doc.setDrawColor(180,180,180);
+    doc.line(MARGIN, y, MARGIN + 80, y);
+  }
+
   return doc;
 }
 
@@ -793,6 +814,334 @@ export async function generateFLHAPDF(formData) {
     doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(255,255,255);
     doc.text('Keltic Geomatics — Field Level Hazard Assessment — Form #FLHA2015/003', M, PH-4);
     doc.text('Page ' + pg + ' of ' + totalPages, PW-M, PH-4, { align:'right' });
+  }
+  return doc;
+}
+
+// ─── PURCHASE ORDER PDF ───────────────────────────────────────────────────────
+export async function generatePOPDF(po, project, user) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
+
+  const poNum = `PO-${String(po.id).padStart(4,'0')}`;
+  const projName = project?.name || '—';
+  const clientName = project?.clientName || '—';
+  const userName = user?.name || '—';
+
+  // Header
+  doc.setFillColor(...KELTIC.green);
+  doc.rect(0, 0, PAGE_W, 22, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(...KELTIC.white);
+  doc.text('KELTIC GEOMATICS', MARGIN, 10);
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+  doc.text('Land & Engineering Surveys', MARGIN, 15);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+  doc.text('PURCHASE ORDER', PAGE_W - MARGIN, 10, { align: 'right' });
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  doc.text(poNum, PAGE_W - MARGIN, 16, { align: 'right' });
+
+  let y = 30;
+
+  // Info block
+  const infoLines = [
+    ['Requested By', userName],
+    ['Project', projName],
+    ['Client', clientName],
+    ['Date', po.date || new Date().toISOString().slice(0,10)],
+    ['Status', (po.status || 'pending').toUpperCase()],
+  ];
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  for (const [label, val] of infoLines) {
+    doc.setTextColor(...KELTIC.dark); doc.setFont('helvetica', 'bold');
+    doc.text(label + ':', MARGIN, y);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(60,60,60);
+    doc.text(String(val), MARGIN + 38, y);
+    y += 6;
+  }
+  y += 4;
+
+  // Divider
+  doc.setDrawColor(...KELTIC.green); doc.setLineWidth(0.5);
+  doc.line(MARGIN, y, PAGE_W - MARGIN, y); y += 6;
+
+  // Vendor & Description
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...KELTIC.dark);
+  doc.text('Vendor', MARGIN, y); y += 5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(60,60,60);
+  doc.text(po.vendorName || '—', MARGIN, y); y += 8;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...KELTIC.dark);
+  doc.text('Description', MARGIN, y); y += 5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(60,60,60);
+  const descLines = doc.splitTextToSize(po.description || '—', PAGE_W - MARGIN * 2);
+  doc.text(descLines, MARGIN, y); y += descLines.length * 5 + 4;
+
+  // Cost box
+  doc.setFillColor(248, 252, 249);
+  doc.rect(MARGIN, y, PAGE_W - MARGIN * 2, 14, 'F');
+  doc.setDrawColor(...KELTIC.lightGrey);
+  doc.rect(MARGIN, y, PAGE_W - MARGIN * 2, 14, 'S');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...KELTIC.dark);
+  doc.text('Estimated Cost:', MARGIN + 4, y + 9);
+  doc.setTextColor(...KELTIC.green); doc.setFontSize(13);
+  doc.text(`$${Number(po.estimatedCost || 0).toFixed(2)}`, PAGE_W - MARGIN - 4, y + 9, { align: 'right' });
+  y += 20;
+
+  if (po.notes) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...KELTIC.dark);
+    doc.text('Notes:', MARGIN, y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(80,80,80);
+    const noteLines = doc.splitTextToSize(po.notes, PAGE_W - MARGIN * 2);
+    doc.text(noteLines, MARGIN, y); y += noteLines.length * 5 + 6;
+  }
+
+  // Approval block
+  if (po.status === 'approved') {
+    y += 4;
+    doc.setDrawColor(...KELTIC.green); doc.line(MARGIN, y, PAGE_W - MARGIN, y); y += 6;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...KELTIC.green);
+    doc.text('APPROVED', MARGIN, y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80,80,80);
+    doc.text(`Approved: ${(po.approvedAt || '').slice(0,10)}`, MARGIN, y);
+  }
+
+  // Footer
+  doc.setFillColor(...KELTIC.green);
+  doc.rect(0, PAGE_H - 10, PAGE_W, 10, 'F');
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...KELTIC.white);
+  doc.text('Keltic Geomatics — Purchase Order', MARGIN, PAGE_H - 4);
+  doc.text(poNum, PAGE_W - MARGIN, PAGE_H - 4, { align: 'right' });
+
+  return doc;
+}
+
+// ─── SIMOPS PDF ───────────────────────────────────────────────────────────────
+export async function generateSIMOPSPDF(formData, project) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
+  let y = 0;
+
+  const M = MARGIN;
+  const CW = PAGE_W - M * 2;
+
+  function checkPage(need) {
+    if (y + need > PAGE_H - 15) { doc.addPage(); y = M; }
+  }
+
+  // Header
+  doc.setFillColor(...KELTIC.green);
+  doc.rect(0, 0, PAGE_W, 22, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...KELTIC.white);
+  doc.text('KELTIC GEOMATICS', M, 9);
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+  doc.text('Land & Engineering Surveys', M, 14);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+  doc.text('SIMOPS FORM', PAGE_W - M, 9, { align: 'right' });
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+  doc.text(formData.date || '', PAGE_W - M, 14, { align: 'right' });
+  y = 28;
+
+  // Info
+  const info = [
+    ['Location', formData.location || '—'],
+    ['Project', project?.name || '—'],
+    ['Supervisor', formData.supervisor || '—'],
+    ['Date', formData.date || '—'],
+    ['Radio Channel', formData.radioChannel || '—'],
+    ['Check-in Freq', formData.checkinFrequency || '—'],
+    ['Emergency Contact', formData.emergencyContact || '—'],
+    ['Muster Point', formData.musterPoint || '—'],
+  ];
+  doc.setFontSize(9);
+  for (const [k, v] of info) {
+    checkPage(6);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(...KELTIC.dark); doc.text(k + ':', M, y);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(60,60,60); doc.text(String(v), M + 44, y);
+    y += 5.5;
+  }
+  y += 3;
+
+  // Work description
+  checkPage(20);
+  doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+  doc.rect(M, y, CW, 6, 'F'); doc.text('WORK DESCRIPTION', M + 2, y + 4); y += 8;
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(40,40,40);
+  const descLines = doc.splitTextToSize(formData.workDescription || '—', CW);
+  checkPage(descLines.length * 4 + 2);
+  doc.text(descLines, M, y); y += descLines.length * 4 + 6;
+
+  // Simultaneous operations
+  if (formData.operations?.length) {
+    checkPage(20);
+    doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.rect(M, y, CW, 6, 'F'); doc.text('SIMULTANEOUS OPERATIONS', M + 2, y + 4); y += 8;
+    for (const op of formData.operations) {
+      checkPage(12);
+      doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...KELTIC.dark);
+      doc.text(op.name || '—', M, y);
+      doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80);
+      doc.text(`${op.company || ''}  |  Sup: ${op.supervisor || ''}  |  Ph: ${op.phone || ''}`, M + 2, y + 4);
+      y += 9;
+    }
+    y += 3;
+  }
+
+  // Hazards
+  if (formData.hazards?.length) {
+    checkPage(16);
+    doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.rect(M, y, CW, 6, 'F'); doc.text('IDENTIFIED HAZARDS', M + 2, y + 4); y += 8;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(40,40,40);
+    formData.hazards.forEach(h => { checkPage(5); doc.text('• ' + h, M + 2, y); y += 4.5; });
+    y += 4;
+  }
+
+  // Signoffs
+  if (formData.signoffs?.length) {
+    checkPage(20);
+    doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.rect(M, y, CW, 6, 'F'); doc.text('SIGN-OFFS', M + 2, y + 4); y += 8;
+    for (const so of formData.signoffs) {
+      checkPage(28);
+      doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...KELTIC.dark);
+      doc.text(so.name || '—', M, y); y += 4;
+      if (so.signature) {
+        try { doc.addImage(so.signature, 'PNG', M, y, 60, 18, undefined, 'FAST'); } catch(e) {}
+        y += 20;
+      }
+      doc.setDrawColor(150,150,150); doc.line(M, y, M + 70, y); y += 5;
+    }
+  }
+
+  // Footer
+  const total = doc.getNumberOfPages();
+  for (let pg = 1; pg <= total; pg++) {
+    doc.setPage(pg);
+    doc.setFillColor(...KELTIC.green); doc.rect(0, PAGE_H - 10, PAGE_W, 10, 'F');
+    doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(...KELTIC.white);
+    doc.text('Keltic Geomatics — SIMOPS Form', M, PAGE_H - 4);
+    doc.text(`Page ${pg} of ${total}`, PAGE_W - M, PAGE_H - 4, { align: 'right' });
+  }
+  return doc;
+}
+
+// ─── ENVIRONMENTAL SAFETY FORM PDF ────────────────────────────────────────────
+export async function generateEnvironmentalPDF(formData, project) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
+  let y = 0;
+  const M = MARGIN;
+  const CW = PAGE_W - M * 2;
+
+  function checkPage(need) {
+    if (y + need > PAGE_H - 15) { doc.addPage(); y = M; }
+  }
+
+  // Header
+  doc.setFillColor(...KELTIC.green);
+  doc.rect(0, 0, PAGE_W, 22, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...KELTIC.white);
+  doc.text('KELTIC GEOMATICS', M, 9);
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+  doc.text('Land & Engineering Surveys', M, 14);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+  doc.text('ENVIRONMENTAL SAFETY FORM', PAGE_W - M, 9, { align: 'right' });
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+  doc.text(formData.date || '', PAGE_W - M, 14, { align: 'right' });
+  y = 28;
+
+  // Info
+  const info = [
+    ['Date', formData.date || '—'],
+    ['Location', formData.location || '—'],
+    ['Project', project?.name || '—'],
+    ['Weather', formData.weather || '—'],
+  ];
+  doc.setFontSize(9);
+  for (const [k, v] of info) {
+    checkPage(6);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(...KELTIC.dark); doc.text(k + ':', M, y);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(60,60,60); doc.text(String(v), M + 26, y);
+    y += 5.5;
+  }
+  y += 4;
+
+  // Section 1: Hazards
+  if (formData.hazards?.length) {
+    checkPage(16);
+    doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.rect(M, y, CW, 6, 'F'); doc.text('SECTION 1 — ENVIRONMENTAL HAZARDS', M + 2, y + 4); y += 8;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(40,40,40);
+    formData.hazards.forEach(h => { checkPage(5); doc.text('• ' + h, M + 2, y); y += 4.5; });
+    y += 4;
+  }
+
+  // Section 2: Mitigations
+  if (formData.mitigations?.length) {
+    checkPage(16);
+    doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.rect(M, y, CW, 6, 'F'); doc.text('SECTION 2 — MITIGATION MEASURES', M + 2, y + 4); y += 8;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(40,40,40);
+    formData.mitigations.forEach(m => { checkPage(5); doc.text('• ' + m, M + 2, y); y += 4.5; });
+    y += 4;
+  }
+
+  // Section 3: Spill Kit
+  if (formData.spillKit?.length) {
+    checkPage(16);
+    doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.rect(M, y, CW, 6, 'F'); doc.text('SECTION 3 — SPILL KIT INVENTORY (CONFIRMED)', M + 2, y + 4); y += 8;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(40,40,40);
+    formData.spillKit.forEach(item => { checkPage(5); doc.text('✓ ' + item, M + 2, y); y += 4.5; });
+    y += 4;
+  }
+
+  // Section 4: Waste
+  if (formData.wasteItems?.length) {
+    checkPage(16);
+    doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.rect(M, y, CW, 6, 'F'); doc.text('SECTION 4 — WASTE MANAGEMENT', M + 2, y + 4); y += 8;
+    // Table header
+    doc.setFillColor(230,245,235); doc.rect(M, y, CW, 6, 'F');
+    doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(...KELTIC.dark);
+    doc.text('Waste Type', M + 2, y + 4);
+    doc.text('Disposal Method', M + CW * 0.4 + 2, y + 4);
+    doc.text('Container', M + CW * 0.75 + 2, y + 4);
+    y += 7;
+    doc.setFont('helvetica','normal'); doc.setTextColor(40,40,40);
+    formData.wasteItems.forEach((w, i) => {
+      checkPage(6);
+      if (i % 2 === 0) { doc.setFillColor(250,250,250); doc.rect(M, y - 1, CW, 6, 'F'); }
+      doc.text(w.type || '—', M + 2, y + 3);
+      doc.text(w.disposal || '—', M + CW * 0.4 + 2, y + 3);
+      doc.text(w.container || '—', M + CW * 0.75 + 2, y + 3);
+      y += 6;
+    });
+    y += 4;
+  }
+
+  // Section 5: Sign-off
+  if (formData.supervisorName || formData.supervisorSig) {
+    checkPage(30);
+    doc.setFillColor(...KELTIC.green); doc.setTextColor(...KELTIC.white); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.rect(M, y, CW, 6, 'F'); doc.text('SECTION 5 — SUPERVISOR SIGN-OFF', M + 2, y + 4); y += 8;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...KELTIC.dark);
+    doc.text(`Name: ${formData.supervisorName || '—'}`, M, y); y += 4;
+    if (formData.supervisorSig) {
+      try { doc.addImage(formData.supervisorSig, 'PNG', M, y, 60, 18, undefined, 'FAST'); } catch(e) {}
+      y += 20;
+    }
+    doc.setDrawColor(150,150,150); doc.line(M, y, M + 70, y); y += 6;
+  }
+
+  // Footer
+  const total = doc.getNumberOfPages();
+  for (let pg = 1; pg <= total; pg++) {
+    doc.setPage(pg);
+    doc.setFillColor(...KELTIC.green); doc.rect(0, PAGE_H - 10, PAGE_W, 10, 'F');
+    doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(...KELTIC.white);
+    doc.text('Keltic Geomatics — Environmental Safety Form', M, PAGE_H - 4);
+    doc.text(`Page ${pg} of ${total}`, PAGE_W - M, PAGE_H - 4, { align: 'right' });
   }
   return doc;
 }
