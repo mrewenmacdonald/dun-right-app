@@ -3,7 +3,8 @@ import { login, getAllUsers, getUser, getProjects, createProject, generateProjec
          createLEM, getLEMsByUser, getAllLEMs, getPendingLEMs, getAllEquipment,
          getNotifications, markRead, getSetting, setSetting,
          createPO, getPOsByUser, getAllPOs, getPOsByProject,
-         createMileageLog, getMileageByUser, getAllMileage, getMileageByProject } from './db.js';
+         createMileageLog, getMileageByUser, getAllMileage, getMileageByProject,
+         updateUser, getDeactivatedUsers } from './db.js';
 import { generateLEMPDF, generateInvoicePDF, generatePOPDF, generateSIMOPSPDF, generateEnvironmentalPDF } from './pdf.js';
 import { setAccessToken, uploadTimesheetPDF, uploadInvoicePDF,
          uploadReceiptPhoto, uploadSitePhoto, uploadSafetyForm,
@@ -2292,43 +2293,62 @@ window.uploadPhotos = async () => {
 async function renderStaff() {
   const container = $('page-staff').querySelector('.page-scroll');
   const users = await getAllUsers();
+  const isSup = currentUser?.role === 'supervisor';
+
   let html = `<div class="section-header">
-    <span class="section-title">Staff</span>
-    <button class="btn btn-primary btn-sm" onclick="openAddStaffModal()">+ Add</button>
+    <span class="section-title">Staff (${users.length})</span>
+    ${isSup ? `<button class="btn btn-primary btn-sm" onclick="openAddStaffModal()">+ Add</button>` : ''}
   </div>`;
+
   users.forEach(u => {
-    html += `<div class="list-item">
-      <div class="list-item-left" onclick="viewEmployeeProfile(${u.id})" style="cursor:pointer;flex:1">
-        <div class="list-item-title">${escHtml(u.name)}</div>
-        <div class="list-item-sub">${u.role} • ${u.province || '—'} • ${u.hourlyRate ? '$' + u.hourlyRate + '/hr' : 'rate not set'}</div>
-        <div class="list-item-sub" style="font-size:0.75rem">${u.email || '—'}</div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-        <button class="btn btn-sm btn-ghost" onclick="viewEmployeeProfile(${u.id})">Profile</button>
-        <button class="btn btn-sm btn-ghost" onclick="openSendReminderModal(${u.id},'${escHtml(u.name)}')">🔔 Ping</button>
-        <button class="btn btn-sm btn-danger" onclick="deactivateUser(${u.id})">Remove</button>
+    const roleColor = u.role === 'supervisor' ? 'var(--gold)' : 'var(--accent)';
+    html += `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="card-title" style="margin:0">${escHtml(u.name)}</span>
+            <span style="font-size:0.7rem;font-weight:700;color:${roleColor};background:${roleColor}22;padding:2px 8px;border-radius:20px;white-space:nowrap">${u.role.toUpperCase()}</span>
+          </div>
+          ${u.position ? `<div class="text-sm text-muted mt-2">${escHtml(u.position)}</div>` : ''}
+          <div class="text-sm text-muted mt-2">${u.email || '—'}</div>
+          ${u.phone ? `<div class="text-sm text-muted">${escHtml(u.phone)}</div>` : ''}
+          <div class="text-sm mt-4" style="color:var(--text-muted)">
+            ${u.hourlyRate ? `<strong style="color:var(--text)">$${u.hourlyRate}/hr</strong>` : 'Rate not set'}
+            ${u.province ? ` • ${u.province}` : ''}
+            ${u.hireDate ? ` • Hired ${u.hireDate}` : ''}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0">
+          <button class="btn btn-sm btn-ghost" onclick="viewEmployeeProfile(${u.id})">Profile</button>
+          ${isSup ? `<button class="btn btn-sm btn-outline" onclick="openEditEmployeeModal(${u.id})" style="color:var(--gold);border-color:var(--gold)">✏️ Edit</button>` : ''}
+          ${isSup && u.id !== currentUser.id ? `<button class="btn btn-sm btn-ghost" onclick="confirmDeactivate(${u.id},'${escHtml(u.name)}')" style="color:var(--danger);border:1px solid var(--danger);background:transparent;font-size:0.7rem">Deactivate</button>` : ''}
+        </div>
       </div>
     </div>`;
   });
-  html += `<div class="section-header mt-16"><span class="section-title">Send Reminder</span></div>
-  <div class="card">
-    <div class="form-group"><label>Message</label><textarea id="reminder-msg" placeholder="Reminder message..."></textarea></div>
-    <div class="form-group"><label>Schedule For</label><input type="datetime-local" id="reminder-time"></div>
-    <div class="toggle-row">
-      <span class="toggle-label">Send to ALL staff</span>
-      <button class="toggle" id="tog-all-staff" onclick="toggleBtn(this,'reminder-individual')"></button>
-    </div>
-    <div id="reminder-individual">
-      <div class="form-group mt-8"><label>Or Select Specific Staff</label>
-        <select id="reminder-user">
-          ${users.filter(u => u.id !== currentUser.id).map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('')}
-        </select>
+
+  if (isSup) {
+    html += `<div class="section-header mt-16"><span class="section-title">Send Reminder</span></div>
+    <div class="card">
+      <div class="form-group"><label>Message</label><textarea id="reminder-msg" placeholder="Reminder message..."></textarea></div>
+      <div class="form-group"><label>Schedule For</label><input type="datetime-local" id="reminder-time"></div>
+      <div class="toggle-row">
+        <span class="toggle-label">Send to ALL staff</span>
+        <button class="toggle" id="tog-all-staff" onclick="toggleBtn(this,'reminder-individual')"></button>
       </div>
-    </div>
-    <button class="btn btn-primary btn-full mt-8" onclick="sendReminder()">Send Reminder</button>
-  </div>`;
+      <div id="reminder-individual">
+        <div class="form-group mt-8"><label>Or Select Specific Staff</label>
+          <select id="reminder-user">
+            ${users.filter(u => u.id !== currentUser.id).map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-full mt-8" onclick="sendReminder()">Send Reminder</button>
+    </div>`;
+  }
+
   container.innerHTML = html;
-  $('reminder-time').value = new Date(Date.now() + 60000).toISOString().slice(0,16);
+  if (isSup && $('reminder-time')) $('reminder-time').value = new Date(Date.now() + 60000).toISOString().slice(0,16);
 }
 
 window.sendReminder = async () => {
@@ -2348,10 +2368,137 @@ window.sendReminder = async () => {
   $('reminder-msg').value = '';
 };
 
-window.deactivateUser = async (id) => {
-  if (!confirm('Remove this staff member?')) return;
-  await window.DR_DB.users.update(id, { active: false });
-  toast('Staff member removed', 'info');
+window.confirmDeactivate = (id, name) => {
+  if (currentUser?.role !== 'supervisor') { toast('Only supervisors can deactivate staff', 'error'); return; }
+  const modal = $('deactivate-confirm-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title" style="color:var(--danger)">⚠️ Deactivate Staff Member</div>
+    <div class="card" style="background:var(--danger)11;border-color:var(--danger);margin:12px 0">
+      <p style="margin:0;font-size:0.9rem;color:var(--text)">You are about to deactivate <strong>${escHtml(name)}</strong>.</p>
+      <p style="margin:8px 0 0;font-size:0.82rem;color:var(--muted)">Their account will be disabled but all their LEMs, hours, and records are preserved. You can restore them from the Recycle Bin in Admin.</p>
+    </div>
+    <div class="form-group">
+      <label style="color:var(--danger);font-weight:700">Type DEACTIVATE to confirm</label>
+      <input type="text" id="deactivate-confirm-input" placeholder="DEACTIVATE" autocomplete="off" autocorrect="off" autocapitalize="off">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('deactivate-confirm')">Cancel</button>
+      <button class="btn btn-danger" onclick="executeDeactivate(${id},'${escHtml(name)}')">Deactivate</button>
+    </div>
+  `;
+  openModal('deactivate-confirm');
+};
+
+window.executeDeactivate = async (id, name) => {
+  const input = $('deactivate-confirm-input')?.value?.trim();
+  if (input !== 'DEACTIVATE') { toast('Type DEACTIVATE exactly to confirm', 'error'); return; }
+  await window.DR_DB.users.update(id, {
+    active: false,
+    deactivatedAt: new Date().toISOString(),
+    deactivatedBy: currentUser.name
+  });
+  closeModal('deactivate-confirm');
+  toast(`${name} deactivated — restorable from Admin → Recycle Bin`, 'info');
+  renderStaff();
+};
+
+window.restoreUser = async (userId, name) => {
+  if (currentUser?.role !== 'supervisor') { toast('Supervisors only', 'error'); return; }
+  await window.DR_DB.users.update(userId, {
+    active: true,
+    deactivatedAt: null,
+    deactivatedBy: null,
+    restoredAt: new Date().toISOString(),
+    restoredBy: currentUser.name
+  });
+  toast(`${name} restored — they can log in again`, 'success');
+  renderAdmin();
+};
+
+window.openEditEmployeeModal = async (userId) => {
+  if (currentUser?.role !== 'supervisor') { toast('Supervisors only', 'error'); return; }
+  const u = await window.DR_DB.users.get(userId);
+  if (!u) { toast('User not found', 'error'); return; }
+  const PROVINCES = ['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'];
+  const modal = $('edit-employee-sheet');
+  modal.innerHTML = `
+    <div class="modal-handle"></div>
+    <div class="modal-title">Edit Employee — ${escHtml(u.name)}</div>
+
+    <div class="section-header mt-8"><span class="section-title">Identity</span></div>
+    <div class="form-group"><label>Full Name</label><input type="text" id="ee-name" value="${escHtml(u.name || '')}"></div>
+    <div class="form-group"><label>Username</label><input type="text" id="ee-username" value="${escHtml(u.username || '')}" autocomplete="off"></div>
+    <div class="form-group"><label>Reset Password (leave blank to keep)</label><input type="password" id="ee-password" placeholder="New password..." autocomplete="new-password"></div>
+    <div class="form-group"><label>Role</label>
+      <select id="ee-role">
+        <option value="field" ${u.role==='field'?'selected':''}>Field Staff</option>
+        <option value="supervisor" ${u.role==='supervisor'?'selected':''}>Supervisor</option>
+        <option value="client" ${u.role==='client'?'selected':''}>Client</option>
+      </select>
+    </div>
+
+    <div class="section-header mt-12"><span class="section-title">Contact</span></div>
+    <div class="form-group"><label>Email</label><input type="email" id="ee-email" value="${escHtml(u.email || '')}"></div>
+    <div class="form-group"><label>Phone</label><input type="tel" id="ee-phone" value="${escHtml(u.phone || '')}" placeholder="250-555-1234"></div>
+    <div class="form-group"><label>Address</label><input type="text" id="ee-address" value="${escHtml(u.address || '')}" placeholder="123 Main St, City, BC"></div>
+    <div class="form-group"><label>Emergency Contact</label><input type="text" id="ee-emergency" value="${escHtml(u.emergencyContact || '')}" placeholder="Name — Relationship — Phone"></div>
+
+    <div class="section-header mt-12"><span class="section-title">Employment</span></div>
+    <div class="form-group"><label>Job Title / Position</label><input type="text" id="ee-position" value="${escHtml(u.position || '')}" placeholder="e.g. Survey Technician"></div>
+    <div class="form-group"><label>Hourly Rate ($/hr)</label><input type="number" id="ee-rate" min="0" step="0.01" value="${u.hourlyRate || ''}"></div>
+    <div class="form-group"><label>Province</label>
+      <select id="ee-province">
+        ${PROVINCES.map(p => `<option value="${p}" ${u.province===p?'selected':''}>${p}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group"><label>Hire Date</label><input type="date" id="ee-hiredate" value="${u.hireDate || ''}"></div>
+    <div class="form-group"><label>SIN / Employee ID (optional)</label><input type="text" id="ee-empid" value="${escHtml(u.employeeId || '')}" placeholder="EMP-001"></div>
+
+    <div class="section-header mt-12"><span class="section-title">Notes</span></div>
+    <div class="form-group"><textarea id="ee-notes" rows="4" placeholder="Any additional notes about this employee...">${escHtml(u.notes || '')}</textarea></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;padding-bottom:32px">
+      <button class="btn btn-ghost" onclick="closeModal('edit-employee')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEmployeeEdit(${userId})">Save Changes</button>
+    </div>
+  `;
+  openModal('edit-employee');
+};
+
+window.saveEmployeeEdit = async (userId) => {
+  const name = $('ee-name').value.trim();
+  const username = $('ee-username').value.trim().toLowerCase();
+  if (!name || !username) { toast('Name and username are required', 'error'); return; }
+
+  // Check username conflict (only if changed)
+  const existing = await window.DR_DB.users.where('username').equals(username).first();
+  if (existing && existing.id !== userId) { toast('Username already taken by another user', 'error'); return; }
+
+  const updates = {
+    name,
+    username,
+    role:            $('ee-role').value,
+    email:           $('ee-email').value.trim(),
+    phone:           $('ee-phone').value.trim(),
+    address:         $('ee-address').value.trim(),
+    emergencyContact:$('ee-emergency').value.trim(),
+    position:        $('ee-position').value.trim(),
+    hourlyRate:      parseFloat($('ee-rate').value) || 0,
+    province:        $('ee-province').value,
+    hireDate:        $('ee-hiredate').value,
+    employeeId:      $('ee-empid').value.trim(),
+    notes:           $('ee-notes').value.trim(),
+    updatedAt:       new Date().toISOString(),
+    updatedBy:       currentUser.name,
+  };
+
+  const newPass = $('ee-password').value;
+  if (newPass) updates.password = newPass;
+
+  await updateUser(userId, updates);
+  closeModal('edit-employee');
+  toast('Employee profile updated', 'success');
   renderStaff();
 };
 
@@ -2772,6 +2919,33 @@ async function renderAdmin() {
         </div>`;
       }
     }
+  }
+
+  // ─── Recycle Bin ─────────────────────────────────────────────────────────
+  const deactivated = await getDeactivatedUsers();
+  html += `<div class="section-header mt-16">
+    <span class="section-title">🗑 Recycle Bin</span>
+    <span class="text-sm text-muted">${deactivated.length} item${deactivated.length !== 1 ? 's' : ''}</span>
+  </div>`;
+
+  if (!deactivated.length) {
+    html += `<div class="card" style="text-align:center;color:var(--muted);padding:20px 12px">
+      <p style="margin:0;font-size:0.85rem">No deactivated accounts</p>
+    </div>`;
+  } else {
+    deactivated.forEach(u => {
+      html += `<div class="card" style="border-color:var(--danger)44;opacity:0.85">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="flex:1">
+            <div class="card-title" style="color:var(--text)">${escHtml(u.name)}</div>
+            <div class="text-sm text-muted">${u.role} • ${u.email || '—'}</div>
+            ${u.deactivatedAt ? `<div class="text-sm text-muted" style="font-size:0.75rem;margin-top:4px">Deactivated ${u.deactivatedAt.slice(0,10)} by ${escHtml(u.deactivatedBy || '—')}</div>` : ''}
+            <div class="text-sm text-muted" style="font-size:0.73rem;color:var(--success);margin-top:2px">✓ All LEMs, hours and records preserved</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="restoreUser(${u.id},'${escHtml(u.name)}')" style="color:var(--success);border-color:var(--success);flex-shrink:0">↩ Restore</button>
+        </div>
+      </div>`;
+    });
   }
 
   container.innerHTML = html;

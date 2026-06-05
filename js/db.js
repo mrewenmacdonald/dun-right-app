@@ -213,3 +213,37 @@ export async function markRead(id) { return db.notifications.update(id, { read: 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 export async function getSetting(key)        { const r = await db.settings.get(key); return r ? r.value : null; }
 export async function setSetting(key, value) { return db.settings.put({ key, value }); }
+
+// ─── v5: Extended user profiles + deactivation tracking ──────────────────────
+db.version(5).stores({
+  users:               '++id, username, role, email, active, projectId, deactivatedAt',
+  projects:            '++id, name, projectNumber, clientName, clientEmail, status, createdBy, createdAt',
+  workOrders:          '++id, projectId, userId, date, status, supervisorId, submittedAt, approvedAt, syncStatus',
+  lems:                '++id, lemNumber, projectId, userId, date, status, supervisorId, submittedAt, approvedAt, syncStatus',
+  payItems:            '++id, name, rate, unit, active',
+  consumables:         '++id, name, unit, active',
+  safetyForms:         '++id, userId, projectId, type, date, status, syncStatus',
+  receipts:            '++id, userId, projectId, amount, billable, date, status, syncStatus',
+  photos:              '++id, userId, projectId, filename, takenAt, syncStatus',
+  notifications:       '++id, toUserId, fromUserId, message, scheduledAt, sentAt, read, type',
+  invoices:            '++id, projectId, createdBy, status, total, createdAt, sentAt',
+  invoiceItems:        '++id, invoiceId, lemId, description, quantity, rate, amount',
+  settings:            'key',
+  syncQueue:           '++id, type, payload, createdAt, attempts',
+  equipment:           '++id, name, type, serialNumber, status, active, assignedTo',
+  equipmentAssignments:'++id, equipmentId, userId, lemId, assignedAt, returnedAt',
+  lemEquipment:        '++id, lemId, userId, equipmentType, serialNumber',
+  lemBatteries:        '++id, lemId, userId, batteryType, quantity',
+  vehicles:            '++id, name, plate, make, model, active',
+  walkarounds:         '++id, vehicleId, userId, date, status, syncStatus',
+  purchaseOrders:      '++id, poNumber, projectId, userId, supervisorId, status, vendorName, date, createdAt',
+  mileageLogs:         '++id, userId, projectId, date, createdAt'
+});
+
+export async function updateUser(id, data) {
+  return db.users.update(id, data);
+}
+
+export async function getDeactivatedUsers() {
+  return db.users.where('active').equals(0).toArray();
+}
