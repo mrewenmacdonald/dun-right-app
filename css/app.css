@@ -274,7 +274,7 @@ textarea { min-height: 80px; resize: vertical; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 /* ── Safe area padding (iPhone notch) ── */
-@upports (padding-bottom: env(safe-area-inset-bottom)) {
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
   .bottom-nav { padding-bottom: env(safe-area-inset-bottom); height: calc(56px + env(safe-area-inset-bottom)); }
   .page-scroll { height: calc(100dvh - 64px - 56px - env(safe-area-inset-bottom)); }
 }
@@ -296,3 +296,27 @@ textarea { min-height: 80px; resize: vertical; }
 .labour-row {
   display: grid; grid-template-columns: 1fr 60px 80px 32px; gap: 6px; align-items: center; margin-bottom: 6px;
 }
+
+/* ── Tile dashboard (form suite) ── */
+.tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.tile {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow);
+}
+.tile-head { padding: 10px 12px; font-size: 0.8rem; font-weight: 700; color: var(--gold); border-bottom: 1px solid var(--border); min-height: 40px; }
+.tile-icon { background: linear-gradient(160deg, var(--accent), var(--mid)); font-size: 2.4rem; text-align: center; padding: 18px 0; }
+.tile-link {
+  background: none; border: none; border-top: 1px solid var(--border); color: var(--text);
+  padding: 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer; text-align: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.tile-link:active { background: rgba(200,169,110,0.15); color: var(--gold); }
+
+/* ── Data table (time cards, reports) ── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.data-table th { text-align: left; padding: 8px 6px; background: var(--accent); color: #fff; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+.data-table td { padding: 7px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.data-table tr.tc-group td { background: rgba(200,169,110,0.12); color: var(--gold); font-weight: 700; }
+.mt-4 { margin-top: 4px; }
+.mb-8 { margin-bottom: 8px; }
+input[type="search"] { -webkit-appearance: none; }
