@@ -158,7 +158,7 @@ export async function login(username, password) {
   return user;
 }
 export async function getUser(id)    { return db.users.get(id); }
-export async function getAllUsers()  { return db.users.where('active').equals(1).toArray(); }
+export async function getAllUsers()  { return db.users.filter(r => r.active === true || r.active === 1).toArray(); }
 
 // ─── Projects ─────────────────────────────────────────────────────────────────
 export async function getProjects(activeOnly = true) {
@@ -185,7 +185,7 @@ export async function getAllLEMs()          { return db.lems.reverse().sortBy('d
 export async function getPendingLEMs()      { return db.lems.where('status').equals('submitted').toArray(); }
 
 // ─── Equipment ────────────────────────────────────────────────────────────────
-export async function getAllEquipment() { return db.equipment.where('active').equals(1).toArray(); }
+export async function getAllEquipment() { return db.equipment.filter(r => r.active === true || r.active === 1).toArray(); }
 
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 export async function createPO(data) {
@@ -240,10 +240,39 @@ db.version(5).stores({
   mileageLogs:         '++id, userId, projectId, date, createdAt'
 });
 
+// ─── v6: Field forms suite — policies, confidential reports, expense envelopes ─
+db.version(6).stores({
+  users:               '++id, username, role, email, active, projectId, deactivatedAt',
+  projects:            '++id, name, projectNumber, clientName, clientEmail, status, createdBy, createdAt',
+  workOrders:          '++id, projectId, userId, date, status, supervisorId, submittedAt, approvedAt, syncStatus',
+  lems:                '++id, lemNumber, projectId, userId, date, status, supervisorId, submittedAt, approvedAt, syncStatus',
+  payItems:            '++id, name, rate, unit, active',
+  consumables:         '++id, name, unit, active',
+  safetyForms:         '++id, userId, projectId, type, date, status, syncStatus',
+  receipts:            '++id, userId, projectId, amount, billable, date, status, syncStatus',
+  photos:              '++id, userId, projectId, filename, takenAt, syncStatus',
+  notifications:       '++id, toUserId, fromUserId, message, scheduledAt, sentAt, read, type',
+  invoices:            '++id, projectId, createdBy, status, total, createdAt, sentAt',
+  invoiceItems:        '++id, invoiceId, lemId, description, quantity, rate, amount',
+  settings:            'key',
+  syncQueue:           '++id, type, payload, createdAt, attempts',
+  equipment:           '++id, name, type, serialNumber, status, active, assignedTo',
+  equipmentAssignments:'++id, equipmentId, userId, lemId, assignedAt, returnedAt',
+  lemEquipment:        '++id, lemId, userId, equipmentType, serialNumber',
+  lemBatteries:        '++id, lemId, userId, batteryType, quantity',
+  vehicles:            '++id, name, plate, make, model, active',
+  walkarounds:         '++id, vehicleId, userId, date, status, syncStatus',
+  purchaseOrders:      '++id, poNumber, projectId, userId, supervisorId, status, vendorName, date, createdAt',
+  mileageLogs:         '++id, userId, projectId, date, createdAt',
+  policies:            '++id, title, category, active, effectiveDate, createdAt',
+  confidentialReports: '++id, status, reporterId, createdAt',
+  expenseEnvelopes:    '++id, userId, date, status, submittedAt, approvedAt, syncStatus'
+});
+
 export async function updateUser(id, data) {
   return db.users.update(id, data);
 }
 
 export async function getDeactivatedUsers() {
-  return db.users.where('active').equals(0).toArray();
+  return db.users.filter(r => r.active === false || r.active === 0).toArray();
 }

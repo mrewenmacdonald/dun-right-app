@@ -10,6 +10,8 @@ import { setAccessToken, uploadTimesheetPDF, uploadInvoicePDF,
          uploadReceiptPhoto, uploadSitePhoto, uploadSafetyForm,
          sendEmail, pdfToBase64,
          handleMSAuthCallback, loadMSToken, initiateMSLogin, isMSConnected, disconnectMS } from './sync.js';
+import { renderDWRExplorer, renderTimeCards, renderSafetyDashboard, renderSafetyExplorer,
+         renderConfidential, renderExpenses, renderFormsHome } from './forms.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let currentUser = null;
@@ -70,6 +72,12 @@ function navigate(page) {
   if (page === 'pos')              renderPurchaseOrders();
   if (page === 'mileage')          renderMileage();
   if (page === 'payroll')          renderPayroll();
+  if (page === 'forms')            renderFormsHome();
+  if (page === 'safety-explore')   renderSafetyExplorer();
+  if (page === 'confidential')     renderConfidential();
+  if (page === 'expenses')         renderExpenses();
+  if (page === 'timecards')        renderTimeCards();
+  window.currentPage = page;
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
@@ -99,10 +107,14 @@ function buildNav() {
 
   const fieldItems = [
     { page: 'home',      icon: svgHome(),      label: 'Home' },
-    { page: 'lem',       icon: svgClipboard(), label: 'LEMs' },
+    { page: 'lem',       icon: svgClipboard(), label: 'DWRs' },
     { page: 'safety',   icon: svgShield(),    label: 'Safety' },
-    { page: 'receipts', icon: svgReceipt(),   label: 'Receipts' },
-    { page: 'photos',   icon: svgCamera(),    label: 'Photos' }
+    { page: 'expenses', icon: svgReceipt(),   label: 'Expenses' },
+    { page: 'forms',    icon: svgGrid(),      label: 'Forms' },
+    { page: 'photos',   icon: svgCamera(),    label: 'Photos' },
+    { page: 'timecards',    icon: svgClock(),    label: 'Time Cards' },
+    { page: 'confidential', icon: svgLock(),     label: 'Confidential' },
+    { page: 'receipts',     icon: svgReceipt(),  label: 'Receipts (legacy)' }
   ];
   const supervisorExtra = [
     { page: 'approvals',     icon: svgCheck(),    label: 'Approve' },
@@ -116,7 +128,7 @@ function buildNav() {
   ];
 
   const bottomItems = currentUser.role === 'supervisor'
-    ? [fieldItems[0], fieldItems[1], supervisorExtra[0], supervisorExtra[7], { page: 'more', icon: svgGrid(), label: 'More' }]
+    ? [fieldItems[0], fieldItems[1], supervisorExtra[0], fieldItems[4], { page: 'more', icon: svgGrid(), label: 'More' }]
     : [...fieldItems.slice(0, 4), { page: 'more', icon: svgGrid(), label: 'More' }];
 
   bottomItems.forEach(item => {
@@ -130,9 +142,9 @@ function buildNav() {
   });
 
   if (currentUser.role === 'supervisor') {
-    buildMoreMenu(supervisorExtra.slice(2), fieldItems.slice(1));
+    buildMoreMenu([supervisorExtra[7], ...supervisorExtra.slice(1, 7)], [fieldItems[2], fieldItems[3], ...fieldItems.slice(5)]);
   } else {
-    buildMoreMenu([], [fieldItems[4]]);
+    buildMoreMenu([], fieldItems.slice(4));
   }
 }
 
@@ -318,6 +330,10 @@ async function renderSupervisorHome() {
       <button class="btn btn-ghost" onclick="navigate('pos')">🛒 Purchase Orders</button>
       <button class="btn btn-ghost" onclick="navigate('mileage')">🚗 Mileage</button>
       <button class="btn btn-ghost" onclick="navigate('payroll')">💰 Payroll</button>
+      <button class="btn btn-ghost" onclick="navigate('expenses')">💵 Expenses</button>
+      <button class="btn btn-ghost" onclick="navigate('timecards')">⏱️ Time Cards</button>
+      <button class="btn btn-ghost" onclick="navigate('safety-explore')">🦺 Safety Log</button>
+      <button class="btn btn-ghost" onclick="navigate('confidential')">🔒 Confidential</button>
     </div>`;
 
   container.innerHTML = html;
@@ -347,10 +363,12 @@ async function renderFieldHome() {
 
   html += `<div class="section-header mt-12"><span class="section-title">Quick Actions</span></div>
   <div class="grid-2">
-    <button class="btn btn-primary" onclick="navigate('lem')">📋 New LEM</button>
+    <button class="btn btn-primary" onclick="navigate('lem')">📋 New DWR / LEM</button>
     <button class="btn btn-outline" onclick="navigate('safety')">🦺 Safety Form</button>
     <button class="btn btn-ghost" onclick="navigate('walkaround')">🚛 Vehicle Check</button>
-    <button class="btn btn-ghost" onclick="navigate('receipts')">🧾 Receipt</button>
+    <button class="btn btn-ghost" onclick="navigate('expenses')">💵 Expenses</button>
+    <button class="btn btn-ghost" onclick="navigate('timecards')">⏱️ Time Cards</button>
+    <button class="btn btn-ghost" onclick="navigate('confidential')">🔒 Confidential Report</button>
     <button class="btn btn-ghost" onclick="openTimeOffRequest()">📅 Time Off</button>
     <button class="btn btn-ghost" onclick="navigate('mileage')">🚗 Mileage</button>
     <button class="btn btn-ghost" onclick="navigate('pos')">🛒 Purchase Orders</button>
@@ -405,6 +423,10 @@ function generateLEMNumber(projectNumber, date) {
 
 // ─── LEM List ─────────────────────────────────────────────────────────────────
 async function renderLEMList() {
+  return renderDWRExplorer();
+}
+
+async function renderLEMListLegacy() {
   const container = $('page-lem').querySelector('.page-scroll');
   const lems = await getLEMsByUser(currentUser.id);
 
@@ -436,13 +458,15 @@ async function renderLEMList() {
 }
 
 // ─── New LEM Modal ────────────────────────────────────────────────────────────
-window.openNewLEMModal = async () => {
+window.openNewLEMModal = async (editId) => {
   const projects = await getProjects();
+  const editing = editId ? await window.DR_DB.lems.get(editId) : null;
+  window._editingLemId = editing ? editId : null;
 
   const modal = $('wo-modal-sheet');
   modal.innerHTML = `
     <div class="modal-handle"></div>
-    <div class="modal-title">New LEM (Daily Field Ticket)</div>
+    <div class="modal-title">${editing ? 'Edit Draft ' + escHtml(editing.lemNumber || '') : 'New LEM (Daily Field Ticket)'}</div>
 
     <div class="form-group">
       <label>Date</label>
@@ -536,11 +560,40 @@ window.openNewLEMModal = async () => {
   // Store projects for search
   window._lemProjectsCache = projects;
 
-  setTimeout(() => {
-    addLabourRow();
+  setTimeout(async () => {
     setupSigCanvas();
     initLEMEquipmentSlots();
-    addBatteryRow();
+    if (editing) {
+      $('lem-date').value = editing.date;
+      const proj = projects.find(p => p.id === editing.projectId) || (await getProjects(false)).find(p => p.id === editing.projectId);
+      if (proj) selectLEMProject(proj.id, proj.name, proj.projectNumber || String(proj.id).padStart(6,'0'));
+      $('lem-number').value = editing.lemNumber || '';
+      for (const l of (editing.labourItems || [])) {
+        await addLabourRow();
+        const row = $('labour-rows').lastElementChild;
+        const set = (cls, v) => { const i = row.querySelector(cls); if (i) i.value = v ?? 0; };
+        if (l.userId) row.querySelector('.lr-employee').value = l.userId;
+        row.querySelector('.lr-title').value = l.title || '';
+        set('.lr-survey', l.survey); set('.lr-draft', l.draft); set('.lr-office', l.office); set('.lr-other', l.other); set('.lr-travel', l.travel);
+        set('.lr-km-start', l.kmStart); set('.lr-km-stop', l.kmStop); set('.lr-rate', l.rate); set('.lr-loa-food', l.loaFood); set('.lr-loa-accom', l.loaAccom);
+      }
+      if (!(editing.labourItems || []).length) addLabourRow();
+      (editing.instruments || []).forEach((ins, i) => {
+        const slots = $('lem-equipment-rows').querySelectorAll('.eq-slot');
+        const slot = slots[i] || (addEquipmentSlot(), $('lem-equipment-rows').lastElementChild);
+        slot.querySelector('.eq-type').value = ins.name; onEquipmentTypeSelected(slot.querySelector('.eq-type')); slot.querySelector('.eq-serial').value = ins.serialNumber || '';
+      });
+      $('lem-equipment-notes').value = editing.equipmentNotes || '';
+      (editing.batteries || []).forEach(b => { addBatteryRow(); const r = $('lem-battery-rows').lastElementChild; r.querySelector('.bat-type').value = b.batteryType; r.querySelector('.bat-qty').value = b.quantity; });
+      if (!(editing.batteries || []).length) addBatteryRow();
+      for (const c of (editing.consumables || [])) { await addConsumableRow(); const r = $('consumable-rows').lastElementChild; const sel = r.querySelector('select'); Array.from(sel.options).forEach(o => { if (o.text === c.name) sel.value = o.value; }); r.querySelector('input').value = c.qty; }
+      (editing.fieldSamples || []).forEach(fs => { addFieldSampleRow(); const inp = $('field-sample-rows').lastElementChild.querySelectorAll('input'); inp[0].value = fs.type; inp[1].value = fs.qty; inp[2].value = fs.notes || ''; });
+      $('lem-notes').value = editing.notes || '';
+      if (editing.signature) { const img = new Image(); img.onload = () => $('sigCanvas').getContext('2d').drawImage(img, 0, 0); img.src = editing.signature; }
+    } else {
+      addLabourRow();
+      addBatteryRow();
+    }
   }, 50);
 
   openModal('wo-modal');
@@ -661,7 +714,7 @@ window.updateLEMNumber = () => {
 let lemUsersCache = [];
 
 window.addLabourRow = async () => {
-  if (!lemUsersCache.length) lemUsersCache = await window.DR_DB.users.where('active').equals(1).toArray();
+  if (!lemUsersCache.length) lemUsersCache = await window.DR_DB.users.filter(r => r.active === true || r.active === 1).toArray();
   const container = $('labour-rows');
   const isSupervisor = currentUser.role === 'supervisor';
   const row = el('div', 'card mt-8');
@@ -720,7 +773,7 @@ window.addLabourRow = async () => {
 let consumablesCache = [];
 
 window.addConsumableRow = async () => {
-  if (!consumablesCache.length) consumablesCache = await window.DR_DB.consumables.where('active').equals(1).toArray();
+  if (!consumablesCache.length) consumablesCache = await window.DR_DB.consumables.filter(r => r.active === true || r.active === 1).toArray();
   const container = $('consumable-rows');
   const row = el('div', 'consumable-row mt-4');
   row.innerHTML = `
@@ -883,7 +936,16 @@ window.submitLEM = async (status) => {
 
   if (status === 'submitted') lemData.submittedAt = new Date().toISOString();
 
-  const id = await createLEM(lemData);
+  let id;
+  if (window._editingLemId) {
+    id = window._editingLemId;
+    await window.DR_DB.lems.update(id, { ...lemData, syncStatus: 'pending', updatedAt: new Date().toISOString() });
+    await window.DR_DB.lemEquipment.where('lemId').equals(id).delete();
+    await window.DR_DB.lemBatteries.where('lemId').equals(id).delete();
+    window._editingLemId = null;
+  } else {
+    id = await createLEM(lemData);
+  }
 
   // Save equipment to lemEquipment table
   for (const eq of instruments) {
@@ -911,6 +973,25 @@ window.submitLEM = async (status) => {
   }
 
   navigate(currentPage);
+};
+
+window.deleteDraftLEM = async (id) => {
+  if (!confirm('Delete this draft? This cannot be undone.')) return;
+  await window.DR_DB.lems.delete(id);
+  await window.DR_DB.lemEquipment.where('lemId').equals(id).delete();
+  await window.DR_DB.lemBatteries.where('lemId').equals(id).delete();
+  closeModal('wo-modal'); toast('Draft deleted', 'success'); navigate(currentPage);
+};
+
+window.lemPDF = async (id) => {
+  try {
+    const lem = await window.DR_DB.lems.get(id);
+    const proj = (await getProjects(false)).find(p => p.id === lem.projectId);
+    const user = await getUser(lem.userId);
+    const sup  = lem.supervisorId ? await getUser(lem.supervisorId) : null;
+    const pdf = await generateLEMPDF(lem, proj, user, sup);
+    pdf.save(`${lem.lemNumber || 'LEM-' + id}.pdf`);
+  } catch (e) { console.error(e); toast('PDF failed: ' + e.message, 'error'); }
 };
 
 window.viewLEM = async (id) => {
@@ -953,7 +1034,11 @@ window.viewLEM = async (id) => {
 
     ${lem.notes ? `<div class="form-group mt-12"><label>Notes</label><div class="text-sm">${escHtml(lem.notes)}</div></div>` : ''}
 
-    <button class="btn btn-ghost btn-full mt-12" onclick="closeModal('wo-modal')">Close</button>
+    ${lem.status === 'draft' && lem.userId === currentUser.id ? `<div class="grid-2 mt-12">
+      <button class="btn btn-danger" onclick="deleteDraftLEM(${id})">Delete Draft</button>
+      <button class="btn btn-primary" onclick="openNewLEMModal(${id})">✏️ Edit Draft</button></div>` : ''}
+    <button class="btn btn-outline btn-full mt-8" onclick="lemPDF(${id})">📄 PDF</button>
+    <button class="btn btn-ghost btn-full mt-8" onclick="closeModal('wo-modal')">Close</button>
   `;
   openModal('wo-modal');
 };
@@ -1335,7 +1420,7 @@ const WALKAROUND_ITEMS = [
 
 async function renderWalkaround() {
   const container = $('page-walkaround').querySelector('.page-scroll');
-  const vehicles = await window.DR_DB.vehicles.where('active').equals(1).toArray();
+  const vehicles = await window.DR_DB.vehicles.filter(r => r.active === true || r.active === 1).toArray();
   const recent = await window.DR_DB.walkarounds
     .where('userId').equals(currentUser.id)
     .reverse().limit(10).sortBy('date');
@@ -1716,6 +1801,10 @@ window.editProject = (id) => { toast('Edit project coming soon', 'info'); };
 
 // ─── Safety ───────────────────────────────────────────────────────────────────
 async function renderSafetyPage() {
+  return renderSafetyDashboard();
+}
+
+async function renderSafetyPageLegacy() {
   const container = $('page-safety').querySelector('.page-scroll');
   const forms = await window.DR_DB.safetyForms.where('userId').equals(currentUser.id).reverse().sortBy('date');
 
@@ -3147,6 +3236,10 @@ window.disconnectMicrosoft = () => { disconnectMS(); renderAdmin(); toast('Micro
 window.navigate = navigate;
 window.openModal = openModal;
 window.closeModal = closeModal;
+window.toast = toast;
+window.currentPage = 'home';
+window.DR_sendEmail = sendEmail;
+window.DR_isMSConnected = isMSConnected;
 window.currentUser = null;
 
 // ─── Phase 2 Features ────────────────────────────────────────────────────────
@@ -3157,6 +3250,8 @@ Object.defineProperty(window, 'currentUser', {
 });
 
 // ─── Additional SVG icons ─────────────────────────────────────────────────────
+function svgClock() { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`; }
+function svgLock()  { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>`; }
 function svgCart()  { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 001.98 1.61h9.72a2 2 0 001.98-1.61L23 6H6"/></svg>`; }
 function svgCar()   { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`; }
 function svgMoney() { return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>`; }
