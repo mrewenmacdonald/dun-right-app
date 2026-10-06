@@ -1,10 +1,10 @@
 {
   "name": "DÙN RIGHT",
   "short_name": "DÙN RIGHT",
-  "description": "Field management app for Keltic Geo field staff and supervisors",
+  "description": "Field management app for Dùn Construction Services field staff and supervisors",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#1a1a2e",
+  "background_color": "#1a0f26",
   "theme_color": "#c8a96e",
   "orientation": "portrait",
   "icons": [

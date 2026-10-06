@@ -586,7 +586,7 @@ export async function renderSafetyExplorer() {
 // ── Rendering a schema form ──────────────────────────────────────────────────
 let sigCounter = 0;
 function bindSig(canvas) {
-  const ctx = canvas.getContext('2d'); ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  const ctx = canvas.getContext('2d'); ctx.strokeStyle = '#2a1640'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
   let drawing = false;
   const pos = e => { const r = canvas.getBoundingClientRect(); const s = canvas.width / r.width; const src = e.touches ? e.touches[0] : e; return { x: (src.clientX - r.left) * s, y: (src.clientY - r.top) * s }; };
   const start = e => { e.preventDefault(); drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); canvas.dataset.signed = '1'; };
@@ -598,8 +598,17 @@ window.clearSigCanvas = id => { const c = $(id); if (c) { c.getContext('2d').cle
 
 function sigHtml(id) {
   return `<div class="sig-canvas-wrap"><canvas id="${id}" class="lib-sig" width="600" height="150" style="display:block;width:100%;touch-action:none"></canvas>
-    <button type="button" class="sig-clear" onclick="clearSigCanvas('${id}')">Clear</button></div>`;
+    <button type="button" class="sig-clear" onclick="clearSigCanvas('${id}')">Clear</button>
+    ${me()?.signature ? `<button type="button" class="sig-use" onclick="useSavedSig('${id}')">Use my signature</button>` : ''}</div>`;
 }
+// Stamp the signature saved in My Profile onto a form's signature pad
+window.useSavedSig = id => {
+  const c = $(id); const sig = me()?.signature;
+  if (!c || !sig) return;
+  const img = new Image();
+  img.onload = () => { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height); c.dataset.signed = '1'; };
+  img.src = sig;
+};
 
 async function fieldHtml(f, ctx) {
   const id = `lf-${f.k}`;
@@ -1122,3 +1131,6 @@ export async function renderFormsHome() {
     <div class="tile-grid">${tiles.map(t => `<div class="tile"><div class="tile-head">${t.t}${t.badge ? `<span class="badge-pill" style="float:right">${t.badge}</span>` : ''}</div><div class="tile-icon">${t.i}</div>
       ${t.links.map(([l, fn]) => `<button class="tile-link" onclick="${fn}">${l}</button>`).join('')}</div>`).join('')}</div>`;
 }
+
+// Shared helpers for dashboard.js (Build #18)
+export { newPDF, pdfHeader, pdfFooter, pdfSection, pdfKV, pdfTable, bindSig, PW, PM };
