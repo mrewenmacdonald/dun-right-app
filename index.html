@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="DÙN RIGHT">
-  <meta name="theme-color" content="#1a1a2e">
+  <meta name="theme-color" content="#2a1640">
   <title>DÙN RIGHT</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="css/app.css">
@@ -24,7 +24,7 @@
 <div id="login-screen" class="login-wrap" style="display:none">
   <div class="login-logo-wrap">
     <div class="login-logo">DÙN RIGHT</div>
-    <div class="login-sub">Keltic Geomatics Field Platform</div>
+    <div class="login-sub">Dùn Construction Services</div>
   </div>
   <div class="login-card">
     <form id="login-form">
@@ -40,7 +40,7 @@
     </form>
     <p class="text-muted text-sm" style="text-align:center;margin-top:16px">Works offline — no internet required once installed</p>
   </div>
-  <p class="text-muted text-sm" style="margin-top:24px;text-align:center">v2.1 • Keltic Geomatics Field Services</p>
+  <p class="text-muted text-sm" style="margin-top:24px;text-align:center">v2.2 • Dùn Construction Services Field Platform</p>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════
@@ -170,6 +170,41 @@
       <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
     </div>
 
+    <!-- ═══ Build #18: field dashboard pages ═══ -->
+    <div id="page-overview" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-jobs" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-hse" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-crew-report" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-equip-report" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-profile" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-forms" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-safety-explore" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-confidential" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-expenses" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+    <div id="page-timecards" class="page" style="display:none">
+      <div class="page-scroll"><div class="flex-center" style="height:100px"><div class="spinner"></div></div></div>
+    </div>
+
   </main>
 
   <!-- Bottom Navigation -->
@@ -263,7 +298,15 @@
   <div class="modal-sheet" id="edit-employee-sheet"></div>
 </div>
 
-<!-- ═══ SCRIPTS
+<!-- Shared sheet for library forms, envelopes, job details, policies -->
+<div class="modal-overlay" id="library-modal-overlay" onclick="handleOverlayClick(event,'library-modal')">
+  <div class="modal-sheet" id="library-modal-sheet"></div>
+</div>
+
+<div class="modal-overlay" id="mileage-modal-overlay" onclick="handleOverlayClick(event,'mileage-modal')">
+  <div class="modal-sheet" id="mileage-modal-sheet"></div>
+</div>
+
 
 <!-- ═══════════════════════════════════════════════════════════════════════
   SCRIPTS

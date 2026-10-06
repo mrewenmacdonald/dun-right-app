@@ -1,5 +1,5 @@
 // DÙN RIGHT Service Worker — Offline-first PWA
-const CACHE_NAME = 'dun-right-v8';
+const CACHE_NAME = 'dun-right-v9';
 const ASSETS = [
   '/',
   '/index.html',
@@ -8,6 +8,8 @@ const ASSETS = [
   '/js/pdf.js',
   '/js/sync.js',
   '/js/app.js',
+  '/js/forms.js',
+  '/js/dashboard.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js'
 ];
