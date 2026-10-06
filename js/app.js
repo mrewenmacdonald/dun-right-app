@@ -11,7 +11,8 @@ import { setAccessToken, uploadTimesheetPDF, uploadInvoicePDF,
          sendEmail, pdfToBase64,
          handleMSAuthCallback, loadMSToken, initiateMSLogin, isMSConnected, disconnectMS } from './sync.js';
 import { renderDWRExplorer, renderTimeCards, renderSafetyDashboard, renderSafetyExplorer,
-         renderConfidential, renderExpenses, renderFormsHome } from './forms.js';
+         renderConfidential, renderExpenses } from './forms.js';
+import { renderDashboard, renderJobs, renderHSE, renderCrewReport, renderEquipReport, renderProfile } from './dashboard.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let currentUser = null;
@@ -46,6 +47,7 @@ function closeModal(id) {
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
 function navigate(page) {
+  if (page === 'forms') page = 'home';   // old Forms tile page now lives on the home dashboard
   currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
   const target = $('page-' + page);
@@ -72,7 +74,12 @@ function navigate(page) {
   if (page === 'pos')              renderPurchaseOrders();
   if (page === 'mileage')          renderMileage();
   if (page === 'payroll')          renderPayroll();
-  if (page === 'forms')            renderFormsHome();
+  if (page === 'overview')         renderSupervisorHome();
+  if (page === 'jobs')             renderJobs();
+  if (page === 'hse')              renderHSE();
+  if (page === 'crew-report')      renderCrewReport();
+  if (page === 'equip-report')     renderEquipReport();
+  if (page === 'profile')          renderProfile();
   if (page === 'safety-explore')   renderSafetyExplorer();
   if (page === 'confidential')     renderConfidential();
   if (page === 'expenses')         renderExpenses();
@@ -110,11 +117,14 @@ function buildNav() {
     { page: 'lem',       icon: svgClipboard(), label: 'DWRs' },
     { page: 'safety',   icon: svgShield(),    label: 'Safety' },
     { page: 'expenses', icon: svgReceipt(),   label: 'Expenses' },
-    { page: 'forms',    icon: svgGrid(),      label: 'Forms' },
+    { page: 'jobs',     icon: svgFolder(),    label: 'Jobs' },
     { page: 'photos',   icon: svgCamera(),    label: 'Photos' },
     { page: 'timecards',    icon: svgClock(),    label: 'Time Cards' },
     { page: 'confidential', icon: svgLock(),     label: 'Confidential' },
-    { page: 'receipts',     icon: svgReceipt(),  label: 'Receipts (legacy)' }
+    { page: 'receipts',     icon: svgReceipt(),  label: 'Receipts (legacy)' },
+    { page: 'hse',          icon: svgShield(),   label: 'HSE Report' },
+    { page: 'equip-report', icon: svgWrench(),   label: 'Equipment Report' },
+    { page: 'profile',      icon: svgPeople(),   label: 'My Profile' }
   ];
   const supervisorExtra = [
     { page: 'approvals',     icon: svgCheck(),    label: 'Approve' },
@@ -211,16 +221,14 @@ function showMoreMenu() { openModal('more'); }
 
 // ─── Home ─────────────────────────────────────────────────────────────────────
 async function renderHome() {
-  if (currentUser.role === 'supervisor') {
-    await renderSupervisorHome();
-  } else {
-    await renderFieldHome();
-  }
+  // Build #18: staff land on the tile dashboard; supervisors reach their KPI overview from a tile
+  if (currentUser.role === 'client') return renderClientHome();
+  await renderDashboard();
 }
 
 // ─── Supervisor Home ───────────────────────────────────────────────────────────
 async function renderSupervisorHome() {
-  const container = $('page-home').querySelector('.page-scroll');
+  const container = $('page-overview').querySelector('.page-scroll');
   const allLems   = await window.DR_DB.lems.toArray();
   const submitted = allLems.filter(l => l.status === 'submitted');
   const drafts    = allLems.filter(l => l.status === 'draft');
@@ -802,7 +810,7 @@ function setupSigCanvas() {
   const canvas = $('sigCanvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  ctx.strokeStyle = '#1a1a2e';
+  ctx.strokeStyle = '#2a1640';
   ctx.lineWidth = 2.5;
   ctx.lineCap = 'round';
 
@@ -3686,7 +3694,7 @@ function setupGenericSigCanvas(canvasId) {
   const canvas = $(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  ctx.strokeStyle = '#1a1a2e';
+  ctx.strokeStyle = '#2a1640';
   ctx.lineWidth = 2.5;
   ctx.lineCap = 'round';
   let drawing = false;
