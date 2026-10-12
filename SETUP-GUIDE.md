@@ -176,7 +176,7 @@ The app stores everything locally on each device using IndexedDB (browser databa
 ## Future Additions (Phase 2)
 
 - [ ] PO (Purchase Order) system for approved purchases
-- [ ] Equipment tracking per project
+- [x] Equipment tracking with QR scan in/out (see EQUIPMENT-SETUP.md)
 - [ ] Mileage log with GPS distance calculation
 - [ ] Weekly payroll summary reports
 - [ ] Client portal (read-only view of their project timesheets)

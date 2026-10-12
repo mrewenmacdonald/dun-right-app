@@ -10,6 +10,7 @@ import { setAccessToken, uploadTimesheetPDF, uploadInvoicePDF,
          uploadReceiptPhoto, uploadSitePhoto, uploadSafetyForm,
          sendEmail, pdfToBase64,
          handleMSAuthCallback, loadMSToken, initiateMSLogin, isMSConnected, disconnectMS } from './sync.js';
+import { renderEquipmentPage, initEquipment } from './equipment.js';
 import { renderDWRExplorer, renderTimeCards, renderSafetyDashboard, renderSafetyExplorer,
          renderConfidential, renderExpenses, renderFormsHome } from './forms.js';
 
@@ -64,7 +65,7 @@ function navigate(page) {
   if (page === 'projects')         renderProjects();
   if (page === 'invoicing')        renderInvoicing();
   if (page === 'staff')            renderStaff();
-  if (page === 'equipment')        renderEquipment();
+  if (page === 'equipment')        renderEquipmentPage();
   if (page === 'walkaround')       renderWalkaround();
   if (page === 'employee-profile') renderEmployeeProfile();
   if (page === 'lem-dashboard')    renderLEMDashboard();
@@ -99,6 +100,7 @@ function showApp() {
   $('header-user-name').textContent = currentUser.name.split(' ')[0];
   updateNotifBadge();
   navigate('home');
+  if (currentUser.role !== 'client') initEquipment();
 }
 
 function buildNav() {
@@ -112,6 +114,7 @@ function buildNav() {
     { page: 'expenses', icon: svgReceipt(),   label: 'Expenses' },
     { page: 'forms',    icon: svgGrid(),      label: 'Forms' },
     { page: 'photos',   icon: svgCamera(),    label: 'Photos' },
+    { page: 'equipment',    icon: svgWrench(),   label: 'Equipment' },
     { page: 'timecards',    icon: svgClock(),    label: 'Time Cards' },
     { page: 'confidential', icon: svgLock(),     label: 'Confidential' },
     { page: 'receipts',     icon: svgReceipt(),  label: 'Receipts (legacy)' }
@@ -142,7 +145,7 @@ function buildNav() {
   });
 
   if (currentUser.role === 'supervisor') {
-    buildMoreMenu([supervisorExtra[7], ...supervisorExtra.slice(1, 7)], [fieldItems[2], fieldItems[3], ...fieldItems.slice(5)]);
+    buildMoreMenu([supervisorExtra[7], ...supervisorExtra.slice(1, 7)], [fieldItems[2], fieldItems[3], ...fieldItems.slice(5).filter(i => i.page !== 'equipment')]);
   } else {
     buildMoreMenu([], fieldItems.slice(4));
   }
@@ -326,6 +329,7 @@ async function renderSupervisorHome() {
       <button class="btn btn-ghost" onclick="navigate('invoicing')">🧾 Invoicing</button>
       <button class="btn btn-ghost" onclick="navigate('admin')">⚙️ Admin</button>
       <button class="btn btn-ghost" onclick="navigate('lem-dashboard')">📊 LEM Board</button>
+      <button class="btn btn-ghost" onclick="navigate('equipment')">🔧 Equipment Board</button>
       <button class="btn btn-ghost" onclick="openTimeOffRequest()">📅 Time Off</button>
       <button class="btn btn-ghost" onclick="navigate('pos')">🛒 Purchase Orders</button>
       <button class="btn btn-ghost" onclick="navigate('mileage')">🚗 Mileage</button>
@@ -361,9 +365,15 @@ async function renderFieldHome() {
     html += '</div>';
   }
 
+  html += `<button class="eq-scan-hero mt-12" onclick="navigate('equipment');eqOpenScanner()">
+    <span class="eq-scan-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg></span>
+    <span><strong>Scan equipment</strong><small>Sign gear in or out</small></span>
+  </button>`;
+
   html += `<div class="section-header mt-12"><span class="section-title">Quick Actions</span></div>
   <div class="grid-2">
     <button class="btn btn-primary" onclick="navigate('lem')">📋 New DWR / LEM</button>
+    <button class="btn btn-outline" onclick="navigate('equipment')">🔧 My Equipment</button>
     <button class="btn btn-outline" onclick="navigate('safety')">🦺 Safety Form</button>
     <button class="btn btn-ghost" onclick="navigate('walkaround')">🚛 Vehicle Check</button>
     <button class="btn btn-ghost" onclick="navigate('expenses')">💵 Expenses</button>
@@ -498,6 +508,7 @@ window.openNewLEMModal = async (editId) => {
     <!-- EQUIPMENT SECTION -->
     <div class="section-header">
       <span class="section-title">Equipment Used</span>
+      <button type="button" class="btn btn-outline btn-sm" onclick="eqFillLEMFromMyGear()">Fill from my gear</button>
     </div>
     <div id="lem-equipment-rows"></div>
     <div class="form-group mt-8">
@@ -1188,213 +1199,7 @@ async function renderLEMDashboard() {
   scroll.innerHTML = html;
 }
 
-// ─── Equipment Page ───────────────────────────────────────────────────────────
-async function renderEquipment() {
-  const container = $('page-equipment').querySelector('.page-scroll');
-  const equipment = await getAllEquipment();
-  const users = await getAllUsers();
-
-  let html = `<div class="section-header">
-    <span class="section-title">Equipment</span>
-    <button class="btn btn-primary btn-sm" onclick="openAddEquipmentModal()">+ Add</button>
-  </div>`;
-
-  // Check for equipment conflicts (same serial on multiple active LEMs)
-  let conflicts = {};
-  if (currentUser.role === 'supervisor') {
-    const activeLEMs = await window.DR_DB.lems.where('status').anyOf(['submitted','approved']).toArray();
-    const serialMap = {};
-    for (const lem of activeLEMs) {
-      const lemEqs = await window.DR_DB.lemEquipment.where('lemId').equals(lem.id).toArray();
-      for (const leq of lemEqs) {
-        if (!leq.serialNumber) continue;
-        const key = leq.serialNumber.toUpperCase();
-        if (!serialMap[key]) serialMap[key] = [];
-        serialMap[key].push({ lemNumber: lem.lemNumber, userId: lem.userId });
-      }
-    }
-    for (const [serial, lems] of Object.entries(serialMap)) {
-      if (lems.length > 1) conflicts[serial] = lems;
-    }
-  }
-
-  if (Object.keys(conflicts).length > 0) {
-    html += `<div class="card mt-8" style="border-color:var(--danger)">
-      <div class="card-title" style="color:var(--danger)">⚠️ Equipment Conflicts Detected</div>`;
-    for (const [serial, lems] of Object.entries(conflicts)) {
-      html += `<div class="text-sm mt-4"><strong>S/N: ${escHtml(serial)}</strong> appears on multiple active LEMs:</div>`;
-      lems.forEach(l => { html += `<div class="text-sm text-muted" style="margin-left:12px">• ${escHtml(l.lemNumber || 'LEM')}</div>`; });
-    }
-    html += '</div>';
-  }
-
-  if (!equipment.length) {
-    html += `<div class="empty-state">${svgWrench()}<p>No equipment listed</p></div>`;
-  } else {
-    equipment.forEach(eq => {
-      const assignedUser = users.find(u => u.id === eq.assignedTo);
-      const statusColor = eq.status === 'available' ? 'var(--success)' : eq.status === 'in-use' ? 'var(--gold)' : 'var(--danger)';
-
-      html += `<div class="card mt-8">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div>
-            <div class="card-title" style="margin-bottom:2px">${escHtml(eq.name)}</div>
-            ${eq.serialNumber ? `<div class="text-sm text-muted">S/N: ${escHtml(eq.serialNumber)}</div>` : ''}
-            <div class="text-sm" style="color:${statusColor};margin-top:2px">${eq.status}</div>
-            ${assignedUser ? `<div class="text-sm" style="color:var(--gold);margin-top:2px">Assigned to: ${escHtml(assignedUser.name)}</div>` : ''}
-            ${eq.serviceNote ? `<div class="text-sm" style="color:var(--warning);margin-top:4px">⚠️ Service: ${escHtml(eq.serviceNote)}</div>` : ''}
-            ${eq.replacementRequired ? `<div class="text-sm" style="color:var(--danger)">🔴 Replacement Required</div>` : ''}
-          </div>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <button class="btn btn-sm btn-outline" onclick="openServiceModal(${eq.id}, '${escHtml(eq.name)}')">🔧 Service</button>
-          </div>
-        </div>
-        ${currentUser.role === 'supervisor' ? `
-        <div style="display:flex;gap:6px;margin-top:8px">
-          <button class="btn btn-sm btn-ghost" onclick="assignEquipment(${eq.id})">Assign</button>
-          <button class="btn btn-sm btn-ghost" onclick="unassignEquipment(${eq.id})">Unassign</button>
-          <button class="btn btn-sm btn-danger" onclick="deactivateEquipment(${eq.id})">Remove</button>
-        </div>` : ''}
-      </div>`;
-    });
-  }
-
-  container.innerHTML = html;
-}
-
-window.openAddEquipmentModal = () => {
-  const modal = $('equipment-modal-sheet');
-  modal.innerHTML = `
-    <div class="modal-handle"></div>
-    <div class="modal-title">Add Equipment to Fleet</div>
-    <div class="form-group">
-      <label>Equipment Type</label>
-      <select id="eq-type" onchange="onAddEqTypeChange(this)">
-        <option value="">Select type...</option>
-        ${EQUIPMENT_TYPES.map(t => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join('')}
-      </select>
-    </div>
-    <div id="eq-serial-wrap" style="display:none">
-      <div class="form-group">
-        <label style="color:var(--danger)">Serial Number (required)</label>
-        <input type="text" id="eq-serial" placeholder="Enter serial number...">
-      </div>
-    </div>
-    <div class="form-group"><label>Notes (optional)</label><input type="text" id="eq-notes" placeholder="Any notes about this unit"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
-      <button class="btn btn-ghost" onclick="closeModal('equipment-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveEquipment()">Add</button>
-    </div>
-  `;
-  openModal('equipment-modal');
-};
-
-window.onAddEqTypeChange = (sel) => {
-  $('eq-serial-wrap').style.display = sel.value ? 'block' : 'none';
-  if (sel.value) $('eq-serial').focus();
-};
-
-window.saveEquipment = async () => {
-  const type = $('eq-type')?.value || '';
-  const serial = $('eq-serial')?.value?.trim() || '';
-  if (!type) { toast('Select an equipment type', 'error'); return; }
-  if (!serial) { toast('Serial number is required', 'error'); return; }
-  const notes = $('eq-notes')?.value?.trim() || '';
-  await window.DR_DB.equipment.add({
-    name: type + (serial ? ` (${serial})` : ''),
-    type,
-    serialNumber: serial,
-    status: 'available', active: true, assignedTo: null,
-    serviceNote: notes || null, replacementRequired: false
-  });
-  closeModal('equipment-modal');
-  toast('Equipment added to fleet', 'success');
-  renderEquipment();
-};
-
-window.openServiceModal = (id, name) => {
-  const modal = $('equipment-modal-sheet');
-  modal.innerHTML = `
-    <div class="modal-handle"></div>
-    <div class="modal-title">Service Request — ${escHtml(name)}</div>
-    <div class="form-group"><label>Problem Description</label><textarea id="svc-note" placeholder="Describe the issue..."></textarea></div>
-    <div class="toggle-row" style="margin-top:8px">
-      <span class="toggle-label" style="color:var(--danger)">Replacement Required?</span>
-      <button class="toggle" id="svc-replace" onclick="toggleBtn(this, null)"></button>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
-      <button class="btn btn-ghost" onclick="closeModal('equipment-modal')">Cancel</button>
-      <button class="btn btn-danger" onclick="submitServiceRequest(${id})">Submit Request</button>
-    </div>
-  `;
-  openModal('equipment-modal');
-};
-
-window.submitServiceRequest = async (id) => {
-  const note = $('svc-note').value.trim();
-  if (!note) { toast('Please describe the issue', 'error'); return; }
-  const replacementRequired = $('svc-replace').classList.contains('on');
-  await window.DR_DB.equipment.update(id, { serviceNote: note, replacementRequired, status: 'service' });
-
-  // Alert supervisors
-  const eq = await window.DR_DB.equipment.get(id);
-  const supervisors = await window.DR_DB.users.where('role').equals('supervisor').toArray();
-  for (const sup of supervisors) {
-    await window.DR_DB.notifications.add({
-      toUserId: sup.id, fromUserId: currentUser.id,
-      message: `⚠️ Service required for ${eq.name}: ${note}${replacementRequired ? ' — REPLACEMENT REQUIRED' : ''}`,
-      scheduledAt: new Date().toISOString(), read: false, type: 'service_alert'
-    });
-  }
-
-  closeModal('equipment-modal');
-  toast('Service request submitted — supervisors notified', 'success');
-  renderEquipment();
-};
-
-window.assignEquipment = async (id) => {
-  const users = await getAllUsers();
-  const modal = $('equipment-modal-sheet');
-  modal.innerHTML = `
-    <div class="modal-handle"></div>
-    <div class="modal-title">Assign Equipment</div>
-    <div class="form-group">
-      <label>Assign To</label>
-      <select id="assign-user">
-        ${users.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('')}
-      </select>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
-      <button class="btn btn-ghost" onclick="closeModal('equipment-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="doAssignEquipment(${id})">Assign</button>
-    </div>
-  `;
-  openModal('equipment-modal');
-};
-
-window.doAssignEquipment = async (id) => {
-  const userId = parseInt($('assign-user').value);
-  await window.DR_DB.equipment.update(id, { assignedTo: userId, status: 'in-use' });
-  await window.DR_DB.equipmentAssignments.add({ equipmentId: id, userId, assignedAt: new Date().toISOString(), returnedAt: null });
-  closeModal('equipment-modal');
-  toast('Equipment assigned', 'success');
-  renderEquipment();
-};
-
-window.unassignEquipment = async (id) => {
-  const assignment = await window.DR_DB.equipmentAssignments.where('equipmentId').equals(id).filter(a => !a.returnedAt).last();
-  if (assignment) await window.DR_DB.equipmentAssignments.update(assignment.id, { returnedAt: new Date().toISOString() });
-  await window.DR_DB.equipment.update(id, { assignedTo: null, status: 'available' });
-  toast('Equipment unassigned', 'success');
-  renderEquipment();
-};
-
-window.deactivateEquipment = async (id) => {
-  if (!confirm('Remove this equipment?')) return;
-  await window.DR_DB.equipment.update(id, { active: false });
-  toast('Equipment removed', 'info');
-  renderEquipment();
-};
+// ─── Equipment Page ─── (moved to js/equipment.js: shared cloud list with QR scan in/out)
 
 // ─── Vehicle Walkaround ───────────────────────────────────────────────────────
 const WALKAROUND_ITEMS = [
