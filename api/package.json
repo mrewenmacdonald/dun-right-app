@@ -1,0 +1,14 @@
+{
+  "name": "dun-right-api",
+  "version": "1.0.0",
+  "description": "DÙN RIGHT shared API (equipment tracking) for Azure Static Web Apps managed functions",
+  "main": "src/functions/*.js",
+  "private": true,
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.0",
+    "@azure/functions": "^4.5.0"
+  }
+}

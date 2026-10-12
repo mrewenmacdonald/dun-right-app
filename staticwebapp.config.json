@@ -1,0 +1,8 @@
+{
+  "platform": {
+    "apiRuntime": "node:20"
+  },
+  "routes": [
+    { "route": "/api/*", "headers": { "Cache-Control": "no-store" } }
+  ]
+}

@@ -1,0 +1,4 @@
+Third-party libraries bundled for offline use:
+
+jsQR 1.4.0 - Apache License 2.0 - https://github.com/cozmo/jsQR
+qrcode-generator 1.4.4 (Kazuhiko Arase) - MIT License - https://github.com/kazuhikoarase/qrcode-generator

@@ -1,5 +1,5 @@
 // DÙN RIGHT Service Worker — Offline-first PWA
-const CACHE_NAME = 'dun-right-v8';
+const CACHE_NAME = 'dun-right-v9';
 const ASSETS = [
   '/',
   '/index.html',
@@ -8,6 +8,10 @@ const ASSETS = [
   '/js/pdf.js',
   '/js/sync.js',
   '/js/app.js',
+  '/js/forms.js',
+  '/js/equipment.js',
+  '/js/vendor/jsQR.min.js',
+  '/js/vendor/qrcode.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js'
 ];
@@ -29,6 +33,8 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+  // Never cache writes or the shared equipment API (always live data)
+  if (e.request.method !== 'GET' || new URL(e.request.url).pathname.startsWith('/api/')) return;
   // Network first for API calls, cache first for assets
   if (e.request.url.includes('graph.microsoft.com')) {
     e.respondWith(fetch(e.request).catch(() => new Response('{"offline":true}', {headers:{'Content-Type':'application/json'}})));
@@ -38,6 +44,7 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(cached => {
       if (cached) return cached;
       return fetch(e.request).then(response => {
+        if (!response.ok) return response;
         const clone = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
         return response;
