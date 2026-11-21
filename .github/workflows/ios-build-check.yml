@@ -1,0 +1,23 @@
+name: iOS build check
+
+# Manual run only. Builds the iOS wrapper for the simulator (no signing).
+# This proves the project compiles. It does NOT publish to TestFlight.
+on:
+  workflow_dispatch:
+
+jobs:
+  ios-simulator-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run ios:add
+      - name: Build for simulator
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App \
+            -sdk iphonesimulator -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
