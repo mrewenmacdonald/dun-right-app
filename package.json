@@ -1,0 +1,19 @@
+{
+  "name": "dun-right-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DUN RIGHT field management app, with iOS wrapper (Capacitor)",
+  "scripts": {
+    "build:www": "node scripts/build-www.js",
+    "ios:add": "npm run build:www && npx cap add ios && bash scripts/ios-prepare.sh",
+    "ios:sync": "npm run build:www && npx cap sync ios && bash scripts/ios-prepare.sh",
+    "ios:open": "npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/ios": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
+}

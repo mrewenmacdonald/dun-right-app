@@ -1,0 +1,19 @@
+{
+  "appId": "ca.dunconstruction.dunright",
+  "appName": "DÙN RIGHT",
+  "webDir": "www",
+  "server": {
+    "url": "https://witty-plant-05789e010.7.azurestaticapps.net",
+    "cleartext": false,
+    "allowNavigation": [
+      "witty-plant-05789e010.7.azurestaticapps.net",
+      "login.microsoftonline.com",
+      "graph.microsoft.com"
+    ]
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#3B1A5E",
+    "limitsNavigationsToAppBoundDomains": true
+  }
+}
